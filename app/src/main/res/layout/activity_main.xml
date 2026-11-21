@@ -9,39 +9,39 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="20dp">
+        android:padding="18dp">
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="📱 Remote Screen :3000"
             android:textColor="@color/accent_cyan"
-            android:textSize="24sp"
+            android:textSize="23sp"
             android:textStyle="bold" />
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="แชร์หน้าจอมือถือและควบคุมจากเบราว์เซอร์คอมพิวเตอร์ผ่าน Wi-Fi วงเดียวกัน"
+            android:text="แชร์หน้าจอมือถือ ควบคุมจากคอม แชทแบบ UltraViewer และอัปเดต APK ไร้สาย"
             android:textColor="@color/text_dim"
-            android:textSize="13sp" />
+            android:textSize="12.5sp" />
 
         <TextView
             android:id="@+id/tvStatusBadge"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="● หยุดทำงาน"
+            android:layout_marginTop="10dp"
+            android:text="● หยุดทำงาน • v2.0.0"
             android:textColor="@color/text_dim"
-            android:textSize="15sp"
+            android:textSize="14sp"
             android:textStyle="bold" />
 
         <Button
             android:id="@+id/btnToggleServer"
             android:layout_width="match_parent"
             android:layout_height="56dp"
-            android:layout_marginTop="14dp"
+            android:layout_marginTop="12dp"
             android:backgroundTint="@color/accent_green"
             android:text="▶ เปิดเซิร์ฟเวอร์ + แชร์หน้าจอ (:3000)"
             android:textAllCaps="false"
@@ -53,15 +53,15 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
+            android:layout_marginTop="14dp"
             android:background="@color/card_dark"
             android:orientation="vertical"
-            android:padding="16dp">
+            android:padding="14dp">
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="🌐 ลิงก์สำหรับเปิดดูและคุมจากคอม (Wi-Fi เดียวกัน)"
+                android:text="🌐 เปิดลิงก์นี้บนคอมพิวเตอร์ (Wi-Fi เดียวกัน)"
                 android:textColor="@color/text_dim"
                 android:textSize="12sp" />
 
@@ -69,7 +69,7 @@
                 android:id="@+id/tvLanUrl"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
+                android:layout_marginTop="4dp"
                 android:text="http://192.168.1.100:3000"
                 android:textColor="@color/accent_cyan"
                 android:textIsSelectable="true"
@@ -77,27 +77,20 @@
                 android:textStyle="bold" />
 
             <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:text="Localhost บนเครื่องนี้:"
-                android:textColor="@color/text_dim"
-                android:textSize="12sp" />
-
-            <TextView
                 android:id="@+id/tvLocalUrl"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
                 android:text="http://localhost:3000"
-                android:textColor="@color/text_main"
+                android:textColor="@color/text_dim"
                 android:textIsSelectable="true"
-                android:textSize="14sp" />
+                android:textSize="12.5sp" />
 
             <TextView
                 android:id="@+id/tvClients"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="6dp"
                 android:text="คอมที่กำลังเชื่อมต่อ: 0 เครื่อง"
                 android:textColor="@color/accent_blue"
                 android:textSize="13sp" />
@@ -131,10 +124,10 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
+            android:layout_marginTop="12dp"
             android:background="@color/card_dark"
             android:orientation="vertical"
-            android:padding="16dp">
+            android:padding="14dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -146,9 +139,9 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="🔐 รหัส PIN ป้องกันคนอื่นใน Wi-Fi"
+                    android:text="🔐 รหัส PIN 6 หลัก (ใช้กรอกบนคอม)"
                     android:textColor="@color/text_main"
-                    android:textSize="14sp"
+                    android:textSize="13.5sp"
                     android:textStyle="bold" />
 
                 <com.google.android.material.switchmaterial.SwitchMaterial
@@ -161,7 +154,7 @@
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
+                android:layout_marginTop="4dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
@@ -185,14 +178,74 @@
             </LinearLayout>
         </LinearLayout>
 
+        <!-- UltraViewer-style 2-Way Chat Card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="@color/card_dark"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="💬 แชทสดกับคอมพิวเตอร์ (แบบ UltraViewer)"
+                android:textColor="@color/accent_cyan"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvChatLog"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:background="#060B18"
+                android:minHeight="68dp"
+                android:padding="10dp"
+                android:text="ยังไม่มีข้อความ — พิมพ์คุยกับคอมพิวเตอร์แบบ UltraViewer ได้ที่นี่"
+                android:textColor="@color/text_main"
+                android:textSize="12.5sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <EditText
+                    android:id="@+id/etPhoneChat"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_marginEnd="8dp"
+                    android:layout_weight="1"
+                    android:background="#060B18"
+                    android:hint="พิมพ์ข้อความส่งไปหน้าจอคอม..."
+                    android:inputType="text"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:textColor="@color/text_main"
+                    android:textColorHint="@color/text_dim"
+                    android:textSize="13sp" />
+
+                <Button
+                    android:id="@+id/btnSendPhoneChat"
+                    android:layout_width="wrap_content"
+                    android:layout_height="44dp"
+                    android:text="ส่ง"
+                    android:textAllCaps="false" />
+            </LinearLayout>
+        </LinearLayout>
+
         <!-- Accessibility Control Card -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
+            android:layout_marginTop="12dp"
             android:background="@color/card_dark"
             android:orientation="vertical"
-            android:padding="16dp">
+            android:padding="14dp">
 
             <TextView
                 android:layout_width="wrap_content"
@@ -209,14 +262,62 @@
                 android:layout_marginTop="6dp"
                 android:text="⚠️ ยังไม่ได้เปิดสิทธิ์ Accessibility"
                 android:textColor="@color/accent_blue"
-                android:textSize="13sp" />
+                android:textSize="12.5sp" />
 
             <Button
                 android:id="@+id/btnOpenAccessibility"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
+                android:layout_marginTop="8dp"
                 android:text="⚙️ เปิดหน้าตั้งค่า Accessibility"
+                android:textAllCaps="false" />
+        </LinearLayout>
+
+        <!-- OTA Self-Update Card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="@color/card_dark"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🔄 อัปเดตแอปไร้สาย (OTA Update)"
+                android:textColor="@color/text_main"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="อัปเดตได้ 2 วิธี: ส่งไฟล์ .apk จากหน้าเว็บคอมพิวเตอร์โดยตรง หรือวางลิงก์ .apk ด้านล่าง"
+                android:textColor="@color/text_dim"
+                android:textSize="12sp" />
+
+            <EditText
+                android:id="@+id/etUpdateUrl"
+                android:layout_width="match_parent"
+                android:layout_height="42dp"
+                android:layout_marginTop="8dp"
+                android:background="#060B18"
+                android:hint="https://.../RemoteScreen3000.apk"
+                android:inputType="textUri"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:textColor="@color/text_main"
+                android:textColorHint="@color/text_dim"
+                android:textSize="12.5sp" />
+
+            <Button
+                android:id="@+id/btnDownloadUpdate"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="⬇️ โหลดและอัปเดต APK"
                 android:textAllCaps="false" />
         </LinearLayout>
 
@@ -224,7 +325,7 @@
             android:id="@+id/tvError"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
+            android:layout_marginTop="10dp"
             android:textColor="@color/accent_red"
             android:textSize="13sp" />
     </LinearLayout>

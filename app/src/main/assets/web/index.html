@@ -3,15 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>📱 Remote Screen :3000 — ดูและควบคุมมือถือจากคอม</title>
+<title>📱 Remote Screen :3000 v2 — Virtual Phone + UltraViewer Control</title>
 <style>
   :root {
     --bg: #050914;
-    --panel: #0f172a;
-    --border: rgba(56, 189, 248, 0.25);
+    --panel: #0d1526;
+    --card: #080e1c;
+    --border: rgba(56, 189, 248, 0.24);
     --cyan: #00f5d4;
     --blue: #38bdf8;
     --green: #10b981;
+    --gold: #fbbf24;
     --red: #ef4444;
     --text: #f8fafc;
     --dim: #94a3b8;
@@ -19,86 +21,157 @@
   * { box-sizing: border-box; user-select: none; }
   html, body {
     margin: 0; padding: 0; height: 100%; width: 100%;
-    background: radial-gradient(circle at 50% 10%, #0d1833 0%, var(--bg) 75%);
+    background: radial-gradient(circle at 35% 10%, #0f1f40 0%, var(--bg) 75%);
     color: var(--text);
     font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
     display: flex; flex-direction: column; overflow: hidden;
   }
   header {
-    display: flex; align-items: center; justify-content: space-between; gap: 10px;
-    padding: 8px 16px; background: rgba(8, 13, 28, 0.94);
-    border-bottom: 1px solid var(--border); flex-wrap: wrap;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 8px 14px; background: rgba(7, 12, 24, 0.96);
+    border-bottom: 1px solid var(--border); flex-wrap: wrap; z-index: 10;
   }
-  .brand { font-weight: 800; font-size: 15px; color: var(--cyan); display: flex; align-items: center; gap: 8px; }
+  .brand { font-weight: 800; font-size: 14.5px; color: var(--cyan); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .pill {
-    font-size: 12px; padding: 3px 10px; border-radius: 999px;
+    font-size: 11.5px; padding: 3px 9px; border-radius: 999px;
     background: rgba(15, 23, 42, 0.9); border: 1px solid var(--border); color: var(--dim);
   }
   .pill.ok { color: var(--green); border-color: rgba(16, 185, 129, 0.5); }
-  .pill.warn { color: #fbbf24; border-color: rgba(251, 191, 36, 0.5); }
+  .pill.warn { color: var(--gold); border-color: rgba(251, 191, 36, 0.5); }
   .main {
     flex: 1; min-height: 0; display: grid;
-    grid-template-columns: 1fr 300px; gap: 12px; padding: 12px;
+    grid-template-columns: 1fr 340px; gap: 12px; padding: 12px;
   }
-  @media (max-width: 860px) {
+  @media (max-width: 900px) {
     .main { grid-template-columns: 1fr; overflow-y: auto; }
   }
+
+  /* Virtual Smartphone Bezel Stage */
   .stage-wrap {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    background: rgba(4, 8, 18, 0.8); border: 1px solid var(--border);
-    border-radius: 16px; padding: 10px; position: relative; min-height: 0;
+    background: rgba(4, 8, 18, 0.78); border: 1px solid var(--border);
+    border-radius: 18px; padding: 12px; position: relative; min-height: 0; overflow: hidden;
   }
-  .phone-frame {
-    position: relative; max-height: calc(100% - 54px); max-width: 100%;
-    border-radius: 18px; overflow: hidden;
-    border: 2px solid rgba(0, 245, 212, 0.35);
-    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.75);
-    background: #000; display: flex; align-items: center; justify-content: center;
+  .stage-wrap:fullscreen, .stage-wrap:-webkit-full-screen {
+    background: #02050c; border-radius: 0; border: none; padding: 10px;
+  }
+  .phone-shell {
+    position: relative; display: flex; align-items: center; justify-content: center;
+    height: 100%; max-height: 100%; max-width: 100%;
+  }
+  .phone-body {
+    position: relative; display: flex; flex-direction: column; align-items: center;
+    background: linear-gradient(160deg, #1a243a, #0b1120);
+    border: 2.5px solid #334155;
+    border-radius: 34px; padding: 12px 10px 10px;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.85), inset 0 0 0 1px rgba(255,255,255,0.08);
+    height: 100%; max-height: 100%; max-width: 100%;
+  }
+  .phone-speaker {
+    width: 54px; height: 5px; border-radius: 99px; background: #1e293b;
+    margin-bottom: 8px; flex-shrink: 0; position: relative;
+  }
+  .phone-speaker::after {
+    content: ""; position: absolute; right: -16px; top: -2px;
+    width: 9px; height: 9px; border-radius: 50%; background: #0f172a;
+    border: 1.5px solid #334155;
+  }
+  .phone-screen-wrap {
+    position: relative; flex: 1; min-height: 0; max-width: 100%;
+    border-radius: 18px; overflow: hidden; background: #000;
+    border: 1px solid rgba(0, 245, 212, 0.22);
+    display: flex; align-items: center; justify-content: center;
   }
   #screenImg {
-    display: block; max-height: 100%; max-width: 100%;
-    object-fit: contain; cursor: crosshair; touch-action: none;
-    -webkit-user-drag: none;
+    display: block; max-height: 100%; max-width: 100%; height: 100%; width: auto;
+    object-fit: contain; cursor: pointer; touch-action: none; -webkit-user-drag: none;
   }
+  .phone-bottom-nav {
+    display: flex; align-items: center; justify-content: space-around;
+    width: 100%; gap: 8px; padding-top: 8px; flex-shrink: 0;
+  }
+  .hw-nav-btn {
+    flex: 1; background: rgba(15, 23, 42, 0.9); color: #e2e8f0;
+    border: 1px solid rgba(148, 163, 184, 0.25); border-radius: 12px;
+    padding: 7px 6px; font-size: 13px; font-weight: 800; cursor: pointer;
+    transition: 0.12s;
+  }
+  .hw-nav-btn:hover { border-color: var(--cyan); color: var(--cyan); background: #172540; }
+  .hw-nav-btn:active { transform: scale(0.96); }
+
+  /* Physical Side Buttons on Right Edge of Virtual Phone */
+  .side-hw-buttons {
+    display: flex; flex-direction: column; gap: 8px; margin-left: 8px;
+  }
+  .side-btn {
+    writing-mode: horizontal-tb;
+    background: linear-gradient(180deg, #1e293b, #0f172a);
+    color: #e2e8f0; border: 1px solid rgba(56, 189, 248, 0.35);
+    border-radius: 10px; padding: 10px 8px; font-size: 11.5px; font-weight: 800;
+    cursor: pointer; min-width: 68px; text-align: center;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.45); transition: 0.12s;
+  }
+  .side-btn:hover { border-color: var(--cyan); color: var(--cyan); transform: translateX(2px); }
+  .side-btn.wake { border-color: rgba(251, 191, 36, 0.55); color: var(--gold); }
+  .side-btn.power { border-color: rgba(239, 68, 68, 0.5); color: #fca5a5; }
+  .side-btn.fs { border-color: rgba(0, 245, 212, 0.55); color: var(--cyan); }
+
   .ripple {
     position: absolute; width: 28px; height: 28px; margin: -14px 0 0 -14px;
     border-radius: 50%; border: 2px solid var(--cyan);
-    background: rgba(0, 245, 212, 0.28); pointer-events: none;
-    animation: pop 0.35s ease-out forwards;
+    background: rgba(0, 245, 212, 0.3); pointer-events: none;
+    animation: pop 0.32s ease-out forwards;
   }
   @keyframes pop {
-    from { transform: scale(0.4); opacity: 1; }
+    from { transform: scale(0.35); opacity: 1; }
     to { transform: scale(1.6); opacity: 0; }
   }
-  .nav-bar {
-    display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; justify-content: center;
-  }
+
   .btn {
     background: #16223d; color: var(--text); border: 1px solid var(--border);
-    border-radius: 9px; padding: 7px 12px; font-size: 12.5px; font-weight: 700;
-    cursor: pointer; transition: 0.14s;
+    border-radius: 8px; padding: 6px 10px; font-size: 12px; font-weight: 700;
+    cursor: pointer; transition: 0.12s;
   }
   .btn:hover { border-color: var(--cyan); color: var(--cyan); background: #1e2d52; }
   .btn.primary { background: linear-gradient(135deg, #00f5d4, #0284c7); color: #04101f; border: none; }
+  .btn.active { border-color: var(--cyan); background: rgba(0, 245, 212, 0.16); color: var(--cyan); }
+
+  /* Right Sidebar (UltraViewer Chat + Keyboard + Stream + OTA Update) */
   .sidebar {
     background: var(--panel); border: 1px solid var(--border);
-    border-radius: 16px; padding: 14px; display: flex; flex-direction: column;
-    gap: 12px; overflow-y: auto;
+    border-radius: 16px; padding: 12px; display: flex; flex-direction: column;
+    gap: 10px; overflow-y: auto;
   }
   .card {
-    background: rgba(6, 11, 24, 0.8); border: 1px solid rgba(148, 163, 184, 0.16);
-    border-radius: 12px; padding: 12px;
+    background: var(--card); border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 12px; padding: 10px 12px;
   }
-  .card h3 { margin: 0 0 8px; font-size: 13px; color: var(--cyan); }
-  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12.5px; margin: 6px 0; }
+  .card h3 { margin: 0 0 8px; font-size: 12.5px; color: var(--cyan); display: flex; align-items: center; justify-content: space-between; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; margin: 5px 0; }
   input[type="text"], input[type="password"] {
-    width: 100%; background: #050914; border: 1px solid var(--border);
-    color: var(--text); border-radius: 8px; padding: 8px 10px; font-size: 13px;
+    width: 100%; background: #040812; border: 1px solid var(--border);
+    color: var(--text); border-radius: 8px; padding: 7px 10px; font-size: 12.5px;
     outline: none; user-select: text;
   }
   input[type="text"]:focus, input[type="password"]:focus { border-color: var(--cyan); }
   input[type="range"] { flex: 1; accent-color: var(--cyan); }
-  .hint { font-size: 11.5px; color: var(--dim); line-height: 1.5; }
+  .hint { font-size: 11px; color: var(--dim); line-height: 1.45; }
+
+  /* UltraViewer Chat Box */
+  .chat-box {
+    height: 155px; overflow-y: auto; background: #040812;
+    border: 1px solid rgba(148, 163, 184, 0.16); border-radius: 8px;
+    padding: 8px; display: flex; flex-direction: column; gap: 6px;
+    margin-bottom: 8px; user-select: text;
+  }
+  .chat-msg {
+    max-width: 88%; padding: 6px 9px; border-radius: 10px;
+    font-size: 12px; line-height: 1.35; word-break: break-word;
+  }
+  .chat-msg.pc { align-self: flex-end; background: rgba(2, 132, 199, 0.35); border: 1px solid rgba(56, 189, 248, 0.45); }
+  .chat-msg.phone { align-self: flex-start; background: rgba(16, 185, 129, 0.22); border: 1px solid rgba(16, 185, 129, 0.45); }
+  .chat-meta { font-size: 10px; color: var(--dim); margin-bottom: 2px; }
+
   #pinOverlay {
     position: fixed; inset: 0; background: rgba(3, 6, 15, 0.92);
     backdrop-filter: blur(8px); display: none; align-items: center; justify-content: center; z-index: 99;
@@ -112,64 +185,110 @@
 </head>
 <body>
 <header>
-  <div class="brand">📱 Remote Screen :3000 <span id="deviceLbl" class="pill">กำลังเชื่อมต่อ...</span></div>
-  <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+  <div class="brand">
+    📱 Remote Screen :3000
+    <span id="deviceLbl" class="pill">กำลังเชื่อมต่อ...</span>
+    <span id="wsBadge" class="pill">WS: ...</span>
     <span id="accBadge" class="pill">Accessibility: ...</span>
-    <button class="btn" onclick="reloadStream()">🔄 รีเชื่อมต่อภาพ</button>
+  </div>
+  <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+    <button class="btn" onclick="sendCmd({type:'wake'})">💡 เปิดจอ</button>
+    <button class="btn" onclick="toggleFullscreen()">⛶ เต็มจอ</button>
+    <button class="btn" onclick="reloadStream()">🔄 รีเชื่อมต่อ</button>
     <button class="btn" onclick="downloadSnapshot()">📸 แคปภาพ</button>
   </div>
 </header>
 
 <div class="main">
-  <div class="stage-wrap">
-    <div class="phone-frame" id="phoneFrame">
-      <img id="screenImg" alt="Mobile Screen Stream" draggable="false" />
-    </div>
-    <div class="nav-bar">
-      <button class="btn" onclick="sendAction('back')">◀ Back</button>
-      <button class="btn" onclick="sendAction('home')">● Home</button>
-      <button class="btn" onclick="sendAction('recents')">▢ Recents</button>
-      <button class="btn" onclick="sendAction('notifications')">🔔 แจ้งเตือน</button>
-      <button class="btn" onclick="sendAction('quick_settings')">⚡ ตั้งค่าด่วน</button>
-      <button class="btn" onclick="sendAction('lock')">🔒 ล็อกจอ</button>
+  <!-- Virtual Smartphone Area -->
+  <div class="stage-wrap" id="stageWrap">
+    <div class="phone-shell">
+      <div class="phone-body">
+        <div class="phone-speaker"></div>
+        <div class="phone-screen-wrap" id="phoneFrame">
+          <img id="screenImg" alt="Mobile Screen Stream" draggable="false" />
+        </div>
+        <div class="phone-bottom-nav">
+          <button class="hw-nav-btn" onclick="sendCmd({type:'action',action:'back'})" title="Back">◀</button>
+          <button class="hw-nav-btn" onclick="sendCmd({type:'action',action:'home'})" title="Home">●</button>
+          <button class="hw-nav-btn" onclick="sendCmd({type:'action',action:'recents'})" title="Recents">▢</button>
+        </div>
+      </div>
+
+      <!-- Physical-style side buttons next to phone bezel -->
+      <div class="side-hw-buttons">
+        <button class="side-btn fs" onclick="toggleFullscreen()" title="เต็มจอ / ออกเต็มจอ">⛶ เต็มจอ</button>
+        <button class="side-btn wake" onclick="sendCmd({type:'wake'})" title="ปลุกหน้าจอมือถือ">💡 เปิดจอ</button>
+        <button class="side-btn" onclick="sendCmd({type:'volume',direction:'up'})" title="เพิ่มเสียง">🔊 Vol +</button>
+        <button class="side-btn" onclick="sendCmd({type:'volume',direction:'down'})" title="ลดเสียง">🔉 Vol -</button>
+        <button class="side-btn" onclick="sendCmd({type:'action',action:'notifications'})" title="แถบแจ้งเตือน">🔔 แจ้งเตือน</button>
+        <button class="side-btn" onclick="sendCmd({type:'action',action:'quick_settings'})" title="ตั้งค่าด่วน">⚡ ตั้งค่า</button>
+        <button class="side-btn power" onclick="sendCmd({type:'action',action:'lock'})" title="ล็อกหน้าจอ">🔒 ล็อกจอ</button>
+        <button class="side-btn power" onclick="sendCmd({type:'action',action:'power'})" title="เมนู Power">⏻ Power</button>
+      </div>
     </div>
   </div>
 
+  <!-- Right Control Sidebar -->
   <div class="sidebar">
+    <!-- UltraViewer-style 2-way Chat -->
     <div class="card">
-      <h3>⌨️ พิมพ์ข้อความส่งไปมือถือ</h3>
-      <input type="text" id="textInput" placeholder="แตะช่องพิมพ์บนมือถือก่อน แล้วพิมพ์ที่นี่..." onkeydown="if(event.key==='Enter') sendText()" />
-      <div style="display:flex; gap:6px; margin-top:8px;">
-        <button class="btn primary" style="flex:1;" onclick="sendText(true)">ส่งข้อความ (ต่อท้าย)</button>
+      <h3>💬 แชทสดกับมือถือ (แบบ UltraViewer)</h3>
+      <div class="chat-box" id="chatBox">
+        <div class="hint">ยังไม่มีข้อความ — พิมพ์คุยกับฝั่งมือถือได้แบบเรียลไทม์</div>
+      </div>
+      <div style="display:flex; gap:6px;">
+        <input type="text" id="chatInput" placeholder="พิมพ์ข้อความแชทส่งไปมือถือ..." onkeydown="if(event.key==='Enter') sendChat()" />
+        <button class="btn primary" onclick="sendChat()">ส่ง</button>
+      </div>
+    </div>
+
+    <!-- Remote Keyboard & Clipboard -->
+    <div class="card">
+      <h3>⌨️ พิมพ์ข้อความลงช่องพิมพ์บนมือถือ</h3>
+      <input type="text" id="textInput" placeholder="แตะช่องพิมพ์บนมือถือก่อน แล้วพิมพ์ที่นี่..." onkeydown="if(event.key==='Enter') sendText(true)" />
+      <div style="display:flex; gap:5px; margin-top:6px; flex-wrap:wrap;">
+        <button class="btn primary" style="flex:1;" onclick="sendText(true)">พิมพ์ต่อท้าย</button>
+        <button class="btn" onclick="sendPaste()">📋 วาง</button>
+        <button class="btn" onclick="sendCmd({type:'backspace'})">⌫ ลบ</button>
         <button class="btn" onclick="sendText(false)">แทนที่</button>
       </div>
     </div>
 
+    <!-- Smoothness / Performance Presets -->
     <div class="card">
-      <h3>⚙️ คุณภาพภาพ & ความลื่น</h3>
-      <div class="row">
-        <span>FPS (<strong id="fpsVal">15</strong>)</span>
-        <input type="range" id="fpsRange" min="5" max="30" value="15" onchange="applySettings()" oninput="document.getElementById('fpsVal').textContent=this.value">
+      <h3>⚡ ความลื่น & ความคมชัด <span id="pingLbl" style="color:var(--dim); font-size:11px;"></span></h3>
+      <div style="display:flex; gap:5px; margin-bottom:6px;">
+        <button class="btn" style="flex:1;" onclick="setPreset(480, 30, 48)">⚡ ลื่นสุด</button>
+        <button class="btn" style="flex:1;" onclick="setPreset(720, 24, 55)">⚖️ สมดุล</button>
+        <button class="btn" style="flex:1;" onclick="setPreset(960, 18, 72)">💎 คมชัด</button>
       </div>
       <div class="row">
-        <span>Quality (<strong id="qualVal">65</strong>%)</span>
-        <input type="range" id="qualRange" min="25" max="90" value="65" onchange="applySettings()" oninput="document.getElementById('qualVal').textContent=this.value">
+        <span>FPS (<strong id="fpsVal">24</strong>)</span>
+        <input type="range" id="fpsRange" min="5" max="30" value="24" onchange="applySettings()" oninput="document.getElementById('fpsVal').textContent=this.value">
+      </div>
+      <div class="row">
+        <span>Quality (<strong id="qualVal">55</strong>%)</span>
+        <input type="range" id="qualRange" min="25" max="90" value="55" onchange="applySettings()" oninput="document.getElementById('qualVal').textContent=this.value">
+      </div>
+      <div class="row">
+        <span>ความละเอียด (<strong id="edgeVal">720</strong>p)</span>
+        <input type="range" id="edgeRange" min="360" max="1080" step="60" value="720" onchange="applySettings()" oninput="document.getElementById('edgeVal').textContent=this.value">
       </div>
     </div>
 
+    <!-- OTA Push APK Update -->
     <div class="card">
-      <h3>🕹️ วิธีควบคุมด้วยเมาส์</h3>
-      <div class="hint">
-        • <b>คลิกซ้าย</b>: แตะหน้าจอมือถือ<br>
-        • <b>คลิกซ้ายค้างแล้วลาก</b>: ปัดหน้าจอ (Swipe)<br>
-        • <b>คลิกขวา</b> หรือ <b>กดค้าง &gt; 0.5 วิ</b>: กดค้าง (Long Press)<br>
-        • <b>ลูกกลิ้งเมาส์</b>: เลื่อนหน้าจอขึ้น/ลง
-      </div>
+      <h3>🔄 อัปเดตแอป APK ไปยังมือถือทันที</h3>
+      <div class="hint" style="margin-bottom:6px;">เลือกไฟล์ <b>.apk</b> เวอร์ชันใหม่จากคอมแล้วกดส่ง มือถือจะเด้งหน้าติดตั้งอัปเดตทันที (ไม่ต้องส่งผ่านเมล/USB)</div>
+      <input type="file" id="apkFileInput" accept=".apk" style="font-size:11.5px; color:var(--dim); width:100%; margin-bottom:6px;" />
+      <button class="btn primary" style="width:100%;" id="btnUploadApk" onclick="uploadApkUpdate()">🚀 ส่งอัปเดต APK ไปมือถือ</button>
+      <div id="otaStatus" class="hint" style="margin-top:5px;"></div>
     </div>
 
     <div class="card">
-      <h3>📋 สถานะล่าสุด</h3>
-      <div id="logBox" class="hint">พร้อมใช้งาน</div>
+      <h3>📋 สถานะ</h3>
+      <div id="logBox" class="hint">พร้อมใช้งาน • คลิกซ้าย=แตะ | ลาก=ปัด | คลิกขวา=กดค้าง | ลูกกลิ้ง=เลื่อน</div>
     </div>
   </div>
 </div>
@@ -186,30 +305,45 @@
 
 <script>
   let currentPin = sessionStorage.getItem('remote3000_pin') || '';
+  let ws = null;
+  let pingTimer = null;
   const img = document.getElementById('screenImg');
   const frame = document.getElementById('phoneFrame');
   const logBox = document.getElementById('logBox');
+  const chatBox = document.getElementById('chatBox');
+  let chatMessages = [];
 
   function setLog(msg) {
     logBox.textContent = new Date().toLocaleTimeString() + ' — ' + msg;
+  }
+
+  function toggleFullscreen() {
+    const stage = document.getElementById('stageWrap');
+    if (!document.fullscreenElement) {
+      (stage.requestFullscreen || stage.webkitRequestFullscreen).call(stage);
+    } else {
+      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    }
   }
 
   async function init() {
     try {
       const res = await fetch('/api/info');
       const info = await res.json();
-      document.getElementById('deviceLbl').textContent = info.device || 'Android';
-      document.getElementById('fpsRange').value = info.fps || 15;
-      document.getElementById('fpsVal').textContent = info.fps || 15;
-      document.getElementById('qualRange').value = info.quality || 65;
-      document.getElementById('qualVal').textContent = info.quality || 65;
+      document.getElementById('deviceLbl').textContent = (info.device || 'Android') + ' (v' + (info.version || '2.0') + ')';
+      document.getElementById('fpsRange').value = info.fps || 24;
+      document.getElementById('fpsVal').textContent = info.fps || 24;
+      document.getElementById('qualRange').value = info.quality || 55;
+      document.getElementById('qualVal').textContent = info.quality || 55;
+      document.getElementById('edgeRange').value = info.maxEdge || 720;
+      document.getElementById('edgeVal').textContent = info.maxEdge || 720;
 
       const acc = document.getElementById('accBadge');
       if (info.accessibility) {
-        acc.textContent = '✅ ควบคุมหน้าจอได้';
+        acc.textContent = '✅ ควบคุมได้';
         acc.className = 'pill ok';
       } else {
-        acc.textContent = '⚠️ ดูได้อย่างเดียว (เปิด Accessibility บนมือถือ)';
+        acc.textContent = '⚠️ ดูได้อย่างเดียว (เปิด Accessibility)';
         acc.className = 'pill warn';
       }
 
@@ -217,14 +351,14 @@
         if (currentPin) {
           const v = await fetch('/api/verify?pin=' + encodeURIComponent(currentPin));
           if (v.ok) {
-            startStream();
+            startConnectedSession();
             return;
           }
         }
         document.getElementById('pinOverlay').style.display = 'flex';
         document.getElementById('pinInput').focus();
       } else {
-        startStream();
+        startConnectedSession();
       }
     } catch (e) {
       setLog('เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ: ' + e.message);
@@ -240,62 +374,185 @@
       currentPin = val;
       sessionStorage.setItem('remote3000_pin', currentPin);
       document.getElementById('pinOverlay').style.display = 'none';
-      startStream();
+      startConnectedSession();
     } else {
       err.textContent = '❌ รหัส PIN ไม่ถูกต้อง';
     }
   }
 
-  function startStream() {
+  function startConnectedSession() {
     img.src = '/stream.mjpeg?pin=' + encodeURIComponent(currentPin) + '&t=' + Date.now();
-    setLog('เชื่อมต่อสตรีมหน้าจอแล้ว');
+    connectWebSocket();
+    setLog('เชื่อมต่อสตรีมหน้าจอและ WebSocket แล้ว');
   }
 
-  function reloadStream() {
-    init();
+  function connectWebSocket() {
+    if (ws) { try { ws.close(); } catch (_) {} }
+    if (pingTimer) clearInterval(pingTimer);
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${proto}//${location.host}/ws?pin=${encodeURIComponent(currentPin)}`);
+    const badge = document.getElementById('wsBadge');
+
+    ws.onopen = () => {
+      badge.textContent = '⚡ WS เชื่อมต่อแล้ว';
+      badge.className = 'pill ok';
+      pingTimer = setInterval(() => {
+        if (ws && ws.readyState === 1) {
+          ws.send(JSON.stringify({ type: 'ping', t: Date.now() }));
+        }
+      }, 3000);
+    };
+
+    ws.onmessage = (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        if (data.type === 'pong' && data.t) {
+          document.getElementById('pingLbl').textContent = (Date.now() - data.t) + ' ms';
+        } else if (data.type === 'chat_history' && Array.isArray(data.messages)) {
+          chatMessages = data.messages;
+          renderChat();
+        } else if (data.type === 'chat' && data.message) {
+          if (!chatMessages.some(m => m.id === data.message.id)) {
+            chatMessages.push(data.message);
+            renderChat();
+          }
+        } else if (data.type === 'error' && data.error) {
+          setLog('⚠️ ' + data.error);
+        }
+      } catch (_) {}
+    };
+
+    ws.onclose = () => {
+      badge.textContent = 'WS: กำลังเชื่อมใหม่...';
+      badge.className = 'pill warn';
+      setTimeout(() => {
+        if (!document.hidden) connectWebSocket();
+      }, 2000);
+    };
   }
 
-  function downloadSnapshot() {
-    const a = document.createElement('a');
-    a.href = '/api/frame.jpg?pin=' + encodeURIComponent(currentPin) + '&t=' + Date.now();
-    a.download = 'phone_screen_' + Date.now() + '.jpg';
-    a.click();
+  function renderChat() {
+    if (!chatMessages.length) {
+      chatBox.innerHTML = '<div class="hint">ยังไม่มีข้อความ — พิมพ์คุยกับฝั่งมือถือได้แบบเรียลไทม์</div>';
+      return;
+    }
+    chatBox.innerHTML = '';
+    for (const m of chatMessages) {
+      const div = document.createElement('div');
+      div.className = 'chat-msg ' + (m.sender === 'PC' ? 'pc' : 'phone');
+      const time = new Date(m.timeMs || Date.now()).toLocaleTimeString();
+      const meta = document.createElement('div');
+      meta.className = 'chat-meta';
+      meta.textContent = (m.sender === 'PC' ? '💻 คอม' : '📱 มือถือ') + ' • ' + time;
+      const body = document.createElement('div');
+      body.textContent = m.text;
+      div.appendChild(meta);
+      div.appendChild(body);
+      chatBox.appendChild(div);
+    }
+    chatBox.scrollTop = chatBox.scrollHeight;
   }
 
-  async function postControl(payload) {
-    try {
-      const res = await fetch('/api/control', {
+  function sendChat() {
+    const inp = document.getElementById('chatInput');
+    const text = inp.value.trim();
+    if (!text) return;
+    inp.value = '';
+    if (ws && ws.readyState === 1) {
+      ws.send(JSON.stringify({ type: 'chat', text }));
+    } else {
+      fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Pin': currentPin },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({ text })
       });
-      const data = await res.json();
-      if (!data.ok && data.error) setLog('⚠️ ' + data.error);
-      return data;
-    } catch (e) {
-      setLog('ส่งคำสั่งไม่สำเร็จ: ' + e.message);
     }
   }
 
-  function sendAction(action) {
-    postControl({ type: 'action', action });
-    setLog('กดปุ่ม: ' + action);
+  function sendCmd(payload) {
+    if (ws && ws.readyState === 1) {
+      ws.send(JSON.stringify(payload));
+      return;
+    }
+    fetch('/api/control', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Pin': currentPin },
+      body: JSON.stringify(payload)
+    }).then(r => r.json()).then(d => {
+      if (!d.ok && d.error) setLog('⚠️ ' + d.error);
+    }).catch(() => {});
   }
 
   function sendText(append = true) {
     const inp = document.getElementById('textInput');
     const txt = inp.value;
     if (!txt) return;
-    postControl({ type: 'text', text: txt, append });
-    setLog('ส่งข้อความ: ' + txt);
+    sendCmd({ type: 'text', text: txt, append });
+    setLog('พิมพ์ไปมือถือ: ' + txt);
     inp.value = '';
+  }
+
+  function sendPaste() {
+    const inp = document.getElementById('textInput');
+    const txt = inp.value;
+    if (!txt) return;
+    sendCmd({ type: 'paste', text: txt });
+    setLog('วางข้อความลงมือถือแล้ว');
+    inp.value = '';
+  }
+
+  function setPreset(edge, fps, qual) {
+    document.getElementById('edgeRange').value = edge;
+    document.getElementById('edgeVal').textContent = edge;
+    document.getElementById('fpsRange').value = fps;
+    document.getElementById('fpsVal').textContent = fps;
+    document.getElementById('qualRange').value = qual;
+    document.getElementById('qualVal').textContent = qual;
+    applySettings();
   }
 
   function applySettings() {
     const fps = parseInt(document.getElementById('fpsRange').value, 10);
     const quality = parseInt(document.getElementById('qualRange').value, 10);
-    postControl({ type: 'settings', fps, quality });
-    setLog(`ตั้งค่า ${fps} FPS / คุณภาพ ${quality}%`);
+    const maxEdge = parseInt(document.getElementById('edgeRange').value, 10);
+    sendCmd({ type: 'settings', fps, quality, maxEdge });
+    setLog(`ปรับภาพ ${maxEdge}p / ${fps} FPS / ${quality}%`);
+  }
+
+  async function uploadApkUpdate() {
+    const fileInp = document.getElementById('apkFileInput');
+    const status = document.getElementById('otaStatus');
+    const btn = document.getElementById('btnUploadApk');
+    if (!fileInp.files || !fileInp.files[0]) {
+      status.textContent = '⚠️ กรุณาเลือกไฟล์ .apk ก่อน';
+      return;
+    }
+    const file = fileInp.files[0];
+    btn.disabled = true;
+    status.textContent = `⏳ กำลังส่ง ${file.name} (${(file.size/1024/1024).toFixed(2)} MB)...`;
+    try {
+      const buf = await file.arrayBuffer();
+      const res = await fetch('/api/update-apk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream', 'X-Pin': currentPin },
+        body: buf
+      });
+      const data = await res.json();
+      status.textContent = (data.ok ? '✅ ' : '❌ ') + (data.message || 'เสร็จสิ้น');
+    } catch (e) {
+      status.textContent = '❌ ส่งอัปเดตไม่สำเร็จ: ' + e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function reloadStream() { init(); }
+
+  function downloadSnapshot() {
+    const a = document.createElement('a');
+    a.href = '/api/frame.jpg?pin=' + encodeURIComponent(currentPin) + '&t=' + Date.now();
+    a.download = 'phone_screen_' + Date.now() + '.jpg';
+    a.click();
   }
 
   function showRipple(clientX, clientY) {
@@ -305,7 +562,7 @@
     el.style.left = (clientX - rect.left) + 'px';
     el.style.top = (clientY - rect.top) + 'px';
     frame.appendChild(el);
-    setTimeout(() => el.remove(), 380);
+    setTimeout(() => el.remove(), 340);
   }
 
   function getNormCoords(e) {
@@ -320,7 +577,7 @@
     e.preventDefault();
     const p = getNormCoords(e);
     showRipple(e.clientX, e.clientY);
-    postControl({ type: 'longpress', x: p.x, y: p.y, duration: 700 });
+    sendCmd({ type: 'longpress', x: p.x, y: p.y, duration: 650 });
     setLog(`Long Press (${(p.x*100).toFixed(0)}%, ${(p.y*100).toFixed(0)}%)`);
   });
 
@@ -339,19 +596,19 @@
     const dt = Date.now() - dragStart.t;
 
     showRipple(e.clientX, e.clientY);
-    if (dx > 12 || dy > 12) {
-      postControl({
+    if (dx > 10 || dy > 10) {
+      sendCmd({
         type: 'swipe',
         x1: dragStart.x, y1: dragStart.y,
         x2: p.x, y2: p.y,
-        duration: Math.min(900, Math.max(100, dt))
+        duration: Math.min(800, Math.max(80, dt))
       });
       setLog('ปัดหน้าจอ (Swipe)');
-    } else if (dt >= 480) {
-      postControl({ type: 'longpress', x: p.x, y: p.y, duration: Math.min(2000, dt) });
+    } else if (dt >= 450) {
+      sendCmd({ type: 'longpress', x: p.x, y: p.y, duration: Math.min(2000, dt) });
       setLog(`กดค้าง (${dt}ms)`);
     } else {
-      postControl({ type: 'tap', x: p.x, y: p.y });
+      sendCmd({ type: 'tap', x: p.x, y: p.y });
       setLog(`แตะ (${(p.x*100).toFixed(0)}%, ${(p.y*100).toFixed(0)}%)`);
     }
     dragStart = null;
@@ -362,11 +619,11 @@
     e.preventDefault();
     if (wheelLock) return;
     wheelLock = true;
-    setTimeout(() => { wheelLock = false; }, 180);
+    setTimeout(() => { wheelLock = false; }, 140);
     const p = getNormCoords(e);
-    const delta = e.deltaY > 0 ? -0.22 : 0.22;
+    const delta = e.deltaY > 0 ? -0.24 : 0.24;
     const y2 = Math.min(0.95, Math.max(0.05, p.y + delta));
-    postControl({ type: 'swipe', x1: p.x, y1: p.y, x2: p.x, y2, duration: 180 });
+    sendCmd({ type: 'swipe', x1: p.x, y1: p.y, x2: p.x, y2, duration: 150 });
   }, { passive: false });
 
   init();

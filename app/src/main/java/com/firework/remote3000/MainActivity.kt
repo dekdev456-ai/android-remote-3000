@@ -13,15 +13,25 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Button
+import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.switchmaterial.SwitchMaterial
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
@@ -32,12 +42,19 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvClients: TextView
     private lateinit var tvAccStatus: TextView
     private lateinit var tvError: TextView
+    private lateinit var tvChatLog: TextView
+    private lateinit var etPhoneChat: EditText
+    private lateinit var btnSendPhoneChat: Button
+    private lateinit var etUpdateUrl: EditText
+    private lateinit var btnDownloadUpdate: Button
     private lateinit var switchPin: SwitchMaterial
     private lateinit var btnToggleServer: Button
     private lateinit var btnCopyLan: Button
     private lateinit var btnRefreshIp: Button
     private lateinit var btnNewPin: Button
     private lateinit var btnOpenAccessibility: Button
+
+    private val timeFmt = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
 
     private val notifPermLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -72,6 +89,11 @@ class MainActivity : AppCompatActivity() {
         tvClients = findViewById(R.id.tvClients)
         tvAccStatus = findViewById(R.id.tvAccStatus)
         tvError = findViewById(R.id.tvError)
+        tvChatLog = findViewById(R.id.tvChatLog)
+        etPhoneChat = findViewById(R.id.etPhoneChat)
+        btnSendPhoneChat = findViewById(R.id.btnSendPhoneChat)
+        etUpdateUrl = findViewById(R.id.etUpdateUrl)
+        btnDownloadUpdate = findViewById(R.id.btnDownloadUpdate)
         switchPin = findViewById(R.id.switchPin)
         btnToggleServer = findViewById(R.id.btnToggleServer)
         btnCopyLan = findViewById(R.id.btnCopyLan)
@@ -114,6 +136,23 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
 
+        btnSendPhoneChat.setOnClickListener {
+            val text = etPhoneChat.text.toString().trim()
+            if (text.isNotEmpty()) {
+                ServiceState.addChatMessage("Phone", text)
+                etPhoneChat.setText("")
+            }
+        }
+
+        btnDownloadUpdate.setOnClickListener {
+            val urlStr = etUpdateUrl.text.toString().trim()
+            if (urlStr.startsWith("http://") || urlStr.startsWith("https://")) {
+                downloadAndInstallApk(urlStr)
+            } else {
+                Toast.makeText(this, "กรุณาวางลิงก์ .apk ที่ขึ้นต้นด้วย http:// หรือ https://", Toast.LENGTH_SHORT).show()
+            }
+        }
+
         observeState()
     }
 
@@ -146,6 +185,48 @@ class MainActivity : AppCompatActivity() {
         startService(stopIntent)
     }
 
+    private fun downloadAndInstallApk(urlStr: String) {
+        btnDownloadUpdate.isEnabled = false
+        btnDownloadUpdate.text = "⏳ กำลังโหลดอัปเดต..."
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                try {
+                    val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                        instanceFollowRedirects = true
+                        connectTimeout = 15_000
+                        readTimeout = 30_000
+                    }
+                    val bytes = conn.inputStream.use { it.readBytes() }
+                    conn.disconnect()
+                    if (bytes.size < 10_000) throw IllegalStateException("ไฟล์ไม่สมบูรณ์")
+                    val dir = File(cacheDir, "updates").apply { mkdirs() }
+                    val file = File(dir, "update.apk")
+                    file.writeBytes(bytes)
+                    Result.success(file)
+                } catch (e: Exception) {
+                    Result.failure(e)
+                }
+            }
+            btnDownloadUpdate.isEnabled = true
+            btnDownloadUpdate.text = "⬇️ โหลดและอัปเดต APK"
+            result.onSuccess { apkFile ->
+                val uri = FileProvider.getUriForFile(
+                    this@MainActivity,
+                    "$packageName.fileprovider",
+                    apkFile
+                )
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, "application/vnd.android.package-archive")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                startActivity(intent)
+            }.onFailure { err ->
+                Toast.makeText(this@MainActivity, "โหลดไม่สำเร็จ: ${err.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     private fun observeState() {
         lifecycleScope.launch {
             combine(
@@ -163,14 +244,14 @@ class MainActivity : AppCompatActivity() {
                 tvClients.text = "คอมที่กำลังเชื่อมต่อ: ${snap.clients} เครื่อง"
 
                 if (snap.running) {
-                    tvStatusBadge.text = "● กำลังทำงาน (Port ${snap.port})"
+                    tvStatusBadge.text = "● กำลังทำงาน (Port ${snap.port}) • v${ServiceState.VERSION_NAME}"
                     tvStatusBadge.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.accent_green))
                     btnToggleServer.text = "⏹ หยุดเซิร์ฟเวอร์"
                     btnToggleServer.backgroundTintList = ColorStateList.valueOf(
                         ContextCompat.getColor(this@MainActivity, R.color.accent_red)
                     )
                 } else {
-                    tvStatusBadge.text = "● หยุดทำงาน"
+                    tvStatusBadge.text = "● หยุดทำงาน • v${ServiceState.VERSION_NAME}"
                     tvStatusBadge.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_dim))
                     btnToggleServer.text = "▶ เปิดเซิร์ฟเวอร์ + แชร์หน้าจอ (:3000)"
                     btnToggleServer.backgroundTintList = ColorStateList.valueOf(
@@ -188,6 +269,20 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     tvAccStatus.text = "⚠️ ยังไม่ได้เปิดสิทธิ์ Accessibility (ดูจอได้อย่างเดียว — กดเปิดด้านล่างเพื่อควบคุมได้)"
                     tvAccStatus.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.accent_blue))
+                }
+            }
+        }
+
+        lifecycleScope.launch {
+            ServiceState.chatMessages.collect { msgs ->
+                if (msgs.isEmpty()) {
+                    tvChatLog.text = "ยังไม่มีข้อความ — พิมพ์คุยกับคอมพิวเตอร์แบบ UltraViewer ได้ที่นี่"
+                } else {
+                    tvChatLog.text = msgs.takeLast(12).joinToString("\n") { m ->
+                        val t = timeFmt.format(Date(m.timeMs))
+                        val tag = if (m.sender == "PC") "💻 คอม" else "📱 มือถือ"
+                        "[$t] $tag: ${m.text}"
+                    }
                 }
             }
         }

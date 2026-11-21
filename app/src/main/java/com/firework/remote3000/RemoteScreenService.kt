@@ -13,6 +13,7 @@ import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+import android.media.AudioManager
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
@@ -20,14 +21,19 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
+import android.os.Looper
+import android.os.PowerManager
 import android.util.DisplayMetrics
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
+import androidx.core.content.FileProvider
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
-class RemoteScreenService : Service(), LocalHttpServer.FrameProvider {
+class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
 
     companion object {
         const val ACTION_START = "com.firework.remote3000.ACTION_START"
@@ -37,15 +43,23 @@ class RemoteScreenService : Service(), LocalHttpServer.FrameProvider {
         const val EXTRA_PORT = "port"
 
         private const val CHANNEL_ID = "remote_screen_3000_channel"
+        private const val CHAT_CHANNEL_ID = "remote_screen_3000_chat"
         private const val NOTIF_ID = 3000
+        private const val CHAT_NOTIF_ID = 3001
     }
 
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
     private var captureThread: HandlerThread? = null
     private var captureHandler: Handler? = null
     private var httpServer: LocalHttpServer? = null
+
+    // Reusable buffers to eliminate GC stutter
+    private var reusableRawBitmap: Bitmap? = null
+    private var reusableCropBitmap: Bitmap? = null
+    private val reusableBaos = ByteArrayOutputStream(96 * 1024)
 
     @Volatile
     private var captureWidth: Int = 540
@@ -54,17 +68,23 @@ class RemoteScreenService : Service(), LocalHttpServer.FrameProvider {
     private var captureHeight: Int = 960
 
     @Volatile
-    private var targetFps: Int = 15
+    private var maxEdgePx: Int = 720
 
     @Volatile
-    private var jpegQuality: Int = 65
+    private var targetFps: Int = 24
+
+    @Volatile
+    private var jpegQuality: Int = 55
 
     @Volatile
     private var lastEncodedAtMs: Long = 0L
 
+    private var realDensityDpi: Int = 320
+
     private val frameSeq = AtomicLong(0L)
     private val latestFrame = AtomicReference<LocalHttpServer.FramePacket?>(null)
     private val frameLock = Object()
+    private val captureConfigLock = Object()
 
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
@@ -106,14 +126,24 @@ class RemoteScreenService : Service(), LocalHttpServer.FrameProvider {
 
     private fun startForegroundWithNotification(port: Int) {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            "Remote Screen Server (:3000)",
-            NotificationManager.IMPORTANCE_LOW
-        ).apply {
-            description = "กำลังเปิดเซิร์ฟเวอร์แชร์และควบคุมหน้าจอบนพอร์ต $port"
-        }
-        nm.createNotificationChannel(channel)
+        nm.createNotificationChannel(
+            NotificationChannel(
+                CHANNEL_ID,
+                "Remote Screen Server (:3000)",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "กำลังเปิดเซิร์ฟเวอร์แชร์และควบคุมหน้าจอบนพอร์ต $port"
+            }
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(
+                CHAT_CHANNEL_ID,
+                "Remote Chat Messages",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "แจ้งเตือนข้อความแชทที่ส่งมาจากคอมพิวเตอร์"
+            }
+        )
 
         val openIntent = PendingIntent.getActivity(
             this,
@@ -159,14 +189,11 @@ class RemoteScreenService : Service(), LocalHttpServer.FrameProvider {
             val server = LocalHttpServer(
                 context = applicationContext,
                 port = port,
-                frameProvider = this,
-                onSettingsChanged = { fps, quality ->
-                    if (fps != null) targetFps = fps
-                    if (quality != null) jpegQuality = quality
-                }
+                delegate = this
             )
             server.start()
             httpServer = server
+            ServiceState.onNewChatBroadcast = { msg -> server.broadcastChat(msg) }
             ServiceState.isRunning.value = true
 
             val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
@@ -183,16 +210,14 @@ class RemoteScreenService : Service(), LocalHttpServer.FrameProvider {
             projection.registerCallback(projectionCallback, handler)
 
             val (realW, realH, densityDpi) = getRealDisplayMetrics()
-            val maxEdge = 960f
-            val scale = (maxEdge / maxOf(realW, realH).toFloat()).coerceIn(0.25f, 1.0f)
-            captureWidth = ((realW * scale).toInt() / 2 * 2).coerceAtLeast(240)
-            captureHeight = ((realH * scale).toInt() / 2 * 2).coerceAtLeast(240)
+            realDensityDpi = densityDpi
+            computeScaledDimensions(realW, realH, maxEdgePx)
 
             val reader = ImageReader.newInstance(
                 captureWidth,
                 captureHeight,
                 PixelFormat.RGBA_8888,
-                2
+                3
             )
             imageReader = reader
             reader.setOnImageAvailableListener({ r -> onNewImage(r) }, handler)
@@ -214,6 +239,13 @@ class RemoteScreenService : Service(), LocalHttpServer.FrameProvider {
         }
     }
 
+    private fun computeScaledDimensions(realW: Int, realH: Int, edge: Int) {
+        val clampedEdge = edge.coerceIn(360, 1280).toFloat()
+        val scale = (clampedEdge / maxOf(realW, realH).toFloat()).coerceIn(0.2f, 1.0f)
+        captureWidth = ((realW * scale).toInt() / 2 * 2).coerceAtLeast(240)
+        captureHeight = ((realH * scale).toInt() / 2 * 2).coerceAtLeast(240)
+    }
+
     private fun onNewImage(reader: ImageReader) {
         val image = try {
             reader.acquireLatestImage()
@@ -233,26 +265,40 @@ class RemoteScreenService : Service(), LocalHttpServer.FrameProvider {
             val buffer = plane.buffer
             val pixelStride = plane.pixelStride
             val rowStride = plane.rowStride
-            val rowPadding = rowStride - pixelStride * captureWidth
-            val paddedWidth = captureWidth + rowPadding / pixelStride
+            val w = captureWidth
+            val h = captureHeight
+            val rowPadding = rowStride - pixelStride * w
+            val paddedWidth = w + rowPadding / pixelStride
 
-            val rawBitmap = Bitmap.createBitmap(paddedWidth, captureHeight, Bitmap.Config.ARGB_8888)
-            rawBitmap.copyPixelsFromBuffer(buffer)
+            var rawBmp = reusableRawBitmap
+            if (rawBmp == null || rawBmp.isRecycled || rawBmp.width != paddedWidth || rawBmp.height != h) {
+                rawBmp?.recycle()
+                rawBmp = Bitmap.createBitmap(paddedWidth, h, Bitmap.Config.ARGB_8888)
+                reusableRawBitmap = rawBmp
+            }
+            rawBmp.copyPixelsFromBuffer(buffer)
 
-            val finalBitmap = if (paddedWidth != captureWidth) {
-                Bitmap.createBitmap(rawBitmap, 0, 0, captureWidth, captureHeight).also {
-                    rawBitmap.recycle()
+            val encodeBmp = if (paddedWidth != w) {
+                var crop = reusableCropBitmap
+                if (crop == null || crop.isRecycled || crop.width != w || crop.height != h) {
+                    crop?.recycle()
+                    crop = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                    reusableCropBitmap = crop
                 }
+                val pixels = IntArray(w * h)
+                rawBmp.getPixels(pixels, 0, w, 0, 0, w, h)
+                crop.setPixels(pixels, 0, w, 0, 0, w, h)
+                crop
             } else {
-                rawBitmap
+                rawBmp
             }
 
-            val baos = ByteArrayOutputStream(64 * 1024)
-            finalBitmap.compress(Bitmap.CompressFormat.JPEG, jpegQuality.coerceIn(25, 92), baos)
-            finalBitmap.recycle()
+            reusableBaos.reset()
+            encodeBmp.compress(Bitmap.CompressFormat.JPEG, jpegQuality.coerceIn(25, 92), reusableBaos)
+            val jpegBytes = reusableBaos.toByteArray()
 
             val packet = LocalHttpServer.FramePacket(
-                jpegBytes = baos.toByteArray(),
+                jpegBytes = jpegBytes,
                 seq = frameSeq.incrementAndGet()
             )
             latestFrame.set(packet)
@@ -260,7 +306,7 @@ class RemoteScreenService : Service(), LocalHttpServer.FrameProvider {
                 frameLock.notifyAll()
             }
         } catch (_: Exception) {
-            // Skip broken frame
+            // Skip frame on resize transition
         } finally {
             try {
                 image.close()
@@ -304,6 +350,130 @@ class RemoteScreenService : Service(), LocalHttpServer.FrameProvider {
     override fun getCaptureDimensions(): Pair<Int, Int> = Pair(captureWidth, captureHeight)
     override fun getTargetFps(): Int = targetFps
     override fun getJpegQuality(): Int = jpegQuality
+    override fun getMaxEdgePx(): Int = maxEdgePx
+
+    override fun updateStreamSettings(fps: Int?, quality: Int?, maxEdge: Int?) {
+        if (fps != null) targetFps = fps.coerceIn(5, 30)
+        if (quality != null) jpegQuality = quality.coerceIn(25, 92)
+        if (maxEdge != null) {
+            val clamped = maxEdge.coerceIn(360, 1080)
+            if (clamped != maxEdgePx) {
+                maxEdgePx = clamped
+                captureHandler?.post { reconfigureVirtualDisplay() }
+            }
+        }
+    }
+
+    private fun reconfigureVirtualDisplay() {
+        synchronized(captureConfigLock) {
+            val vd = virtualDisplay ?: return
+            val handler = captureHandler ?: return
+            val (realW, realH, dpi) = getRealDisplayMetrics()
+            computeScaledDimensions(realW, realH, maxEdgePx)
+
+            val oldReader = imageReader
+            val newReader = ImageReader.newInstance(captureWidth, captureHeight, PixelFormat.RGBA_8888, 3)
+            newReader.setOnImageAvailableListener({ r -> onNewImage(r) }, handler)
+            imageReader = newReader
+            vd.resize(captureWidth, captureHeight, dpi)
+            vd.surface = newReader.surface
+            try {
+                oldReader?.close()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    override fun wakeScreen(): Boolean {
+        return try {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            val wl = pm.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
+                    PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                    PowerManager.ON_AFTER_RELEASE,
+                "RemoteScreen3000:Wake"
+            )
+            wl.acquire(3000L)
+            mainHandler.postDelayed({
+                if (wl.isHeld) {
+                    try {
+                        wl.release()
+                    } catch (_: Exception) {
+                    }
+                }
+            }, 3100L)
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    override fun adjustVolume(direction: String): Boolean {
+        return try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val dir = when (direction.lowercase()) {
+                "up" -> AudioManager.ADJUST_RAISE
+                "down" -> AudioManager.ADJUST_LOWER
+                "mute" -> AudioManager.ADJUST_TOGGLE_MUTE
+                else -> return false
+            }
+            am.adjustStreamVolume(AudioManager.STREAM_MUSIC, dir, AudioManager.FLAG_SHOW_UI)
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    override fun onIncomingPcChat(text: String) {
+        val openIntent = PendingIntent.getActivity(
+            this,
+            2,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val notif = NotificationCompat.Builder(this, CHAT_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle("💬 ข้อความจากคอมพิวเตอร์")
+            .setContentText(text)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(openIntent)
+            .build()
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.notify(CHAT_NOTIF_ID, notif)
+        mainHandler.post {
+            Toast.makeText(applicationContext, "💬 PC: $text", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    override fun installApkBytes(apkBytes: ByteArray): Pair<Boolean, String> {
+        return try {
+            if (apkBytes.size < 10_000) {
+                return Pair(false, "ไฟล์ APK เล็กเกินไปหรือไม่ถูกต้อง")
+            }
+            val dir = File(cacheDir, "updates").apply { mkdirs() }
+            val apkFile = File(dir, "update.apk")
+            apkFile.writeBytes(apkBytes)
+            val uri = FileProvider.getUriForFile(
+                this,
+                "$packageName.fileprovider",
+                apkFile
+            )
+            val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            mainHandler.post {
+                wakeScreen()
+                startActivity(installIntent)
+            }
+            Pair(true, "ส่งไฟล์อัปเดตไปยังมือถือแล้ว (กดยืนยันอัปเดตบนหน้าจอมือถือ)")
+        } catch (e: Exception) {
+            Pair(false, "อัปเดตไม่สำเร็จ: ${e.message}")
+        }
+    }
 
     private fun stopCaptureOnly() {
         ServiceState.isStreaming.value = false
@@ -332,9 +502,15 @@ class RemoteScreenService : Service(), LocalHttpServer.FrameProvider {
         }
         captureThread = null
         captureHandler = null
+
+        reusableRawBitmap?.recycle()
+        reusableRawBitmap = null
+        reusableCropBitmap?.recycle()
+        reusableCropBitmap = null
     }
 
     private fun stopAllAndSelf() {
+        ServiceState.onNewChatBroadcast = null
         stopCaptureOnly()
         try {
             httpServer?.stop()
@@ -351,6 +527,7 @@ class RemoteScreenService : Service(), LocalHttpServer.FrameProvider {
     }
 
     override fun onDestroy() {
+        ServiceState.onNewChatBroadcast = null
         stopCaptureOnly()
         httpServer?.stop()
         httpServer = null

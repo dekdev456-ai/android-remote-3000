@@ -2,6 +2,8 @@ package com.firework.remote3000
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Path
 import android.os.Build
@@ -68,13 +70,13 @@ class RemoteAccessibilityService : AccessibilityService() {
         val y = (normY.coerceIn(0f, 1f) * h).coerceIn(1f, (h - 1).toFloat())
         val path = Path().apply { moveTo(x, y) }
         val gesture = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(path, 0L, 45L))
+            .addStroke(GestureDescription.StrokeDescription(path, 0L, 35L))
             .build()
         mainHandler.post { dispatchGesture(gesture, null, null) }
         return true
     }
 
-    fun longPress(normX: Float, normY: Float, durationMs: Long = 650L): Boolean {
+    fun longPress(normX: Float, normY: Float, durationMs: Long = 600L): Boolean {
         val (w, h) = getScreenBounds()
         val x = (normX.coerceIn(0f, 1f) * w).coerceIn(1f, (w - 1).toFloat())
         val y = (normY.coerceIn(0f, 1f) * h).coerceIn(1f, (h - 1).toFloat())
@@ -92,7 +94,7 @@ class RemoteAccessibilityService : AccessibilityService() {
         normY1: Float,
         normX2: Float,
         normY2: Float,
-        durationMs: Long = 220L
+        durationMs: Long = 180L
     ): Boolean {
         val (w, h) = getScreenBounds()
         val x1 = (normX1.coerceIn(0f, 1f) * w).coerceIn(1f, (w - 1).toFloat())
@@ -103,7 +105,7 @@ class RemoteAccessibilityService : AccessibilityService() {
             moveTo(x1, y1)
             lineTo(x2, y2)
         }
-        val dur = durationMs.coerceIn(60L, 1500L)
+        val dur = durationMs.coerceIn(50L, 1200L)
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0L, dur))
             .build()
@@ -119,6 +121,11 @@ class RemoteAccessibilityService : AccessibilityService() {
             "notifications" -> GLOBAL_ACTION_NOTIFICATIONS
             "quick_settings" -> GLOBAL_ACTION_QUICK_SETTINGS
             "power" -> GLOBAL_ACTION_POWER_DIALOG
+            "screenshot" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                GLOBAL_ACTION_TAKE_SCREENSHOT
+            } else {
+                return false
+            }
             "lock" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 GLOBAL_ACTION_LOCK_SCREEN
             } else {
@@ -140,7 +147,28 @@ class RemoteAccessibilityService : AccessibilityService() {
         val args = Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, newText)
         }
-        val ok = focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-        return ok
+        return focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+    }
+
+    fun sendBackspace(): Boolean {
+        val focused = findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return false
+        val existing = focused.text?.toString() ?: return false
+        if (existing.isEmpty()) return true
+        val trimmed = existing.dropLast(1)
+        val args = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, trimmed)
+        }
+        return focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+    }
+
+    fun pasteText(text: String): Boolean {
+        val cb = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cb.setPrimaryClip(ClipData.newPlainText("RemotePC", text))
+        val focused = findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        if (focused != null) {
+            if (focused.performAction(AccessibilityNodeInfo.ACTION_PASTE)) return true
+            return inputText(text, append = true)
+        }
+        return true
     }
 }
