@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>📱 Remote Screen :3000 — ดูและควบคุมมือถือจากคอม</title>
+<style>
+  :root {
+    --bg: #050914;
+    --panel: #0f172a;
+    --border: rgba(56, 189, 248, 0.25);
+    --cyan: #00f5d4;
+    --blue: #38bdf8;
+    --green: #10b981;
+    --red: #ef4444;
+    --text: #f8fafc;
+    --dim: #94a3b8;
+  }
+  * { box-sizing: border-box; user-select: none; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; width: 100%;
+    background: radial-gradient(circle at 50% 10%, #0d1833 0%, var(--bg) 75%);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 8px 16px; background: rgba(8, 13, 28, 0.94);
+    border-bottom: 1px solid var(--border); flex-wrap: wrap;
+  }
+  .brand { font-weight: 800; font-size: 15px; color: var(--cyan); display: flex; align-items: center; gap: 8px; }
+  .pill {
+    font-size: 12px; padding: 3px 10px; border-radius: 999px;
+    background: rgba(15, 23, 42, 0.9); border: 1px solid var(--border); color: var(--dim);
+  }
+  .pill.ok { color: var(--green); border-color: rgba(16, 185, 129, 0.5); }
+  .pill.warn { color: #fbbf24; border-color: rgba(251, 191, 36, 0.5); }
+  .main {
+    flex: 1; min-height: 0; display: grid;
+    grid-template-columns: 1fr 300px; gap: 12px; padding: 12px;
+  }
+  @media (max-width: 860px) {
+    .main { grid-template-columns: 1fr; overflow-y: auto; }
+  }
+  .stage-wrap {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: rgba(4, 8, 18, 0.8); border: 1px solid var(--border);
+    border-radius: 16px; padding: 10px; position: relative; min-height: 0;
+  }
+  .phone-frame {
+    position: relative; max-height: calc(100% - 54px); max-width: 100%;
+    border-radius: 18px; overflow: hidden;
+    border: 2px solid rgba(0, 245, 212, 0.35);
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.75);
+    background: #000; display: flex; align-items: center; justify-content: center;
+  }
+  #screenImg {
+    display: block; max-height: 100%; max-width: 100%;
+    object-fit: contain; cursor: crosshair; touch-action: none;
+    -webkit-user-drag: none;
+  }
+  .ripple {
+    position: absolute; width: 28px; height: 28px; margin: -14px 0 0 -14px;
+    border-radius: 50%; border: 2px solid var(--cyan);
+    background: rgba(0, 245, 212, 0.28); pointer-events: none;
+    animation: pop 0.35s ease-out forwards;
+  }
+  @keyframes pop {
+    from { transform: scale(0.4); opacity: 1; }
+    to { transform: scale(1.6); opacity: 0; }
+  }
+  .nav-bar {
+    display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; justify-content: center;
+  }
+  .btn {
+    background: #16223d; color: var(--text); border: 1px solid var(--border);
+    border-radius: 9px; padding: 7px 12px; font-size: 12.5px; font-weight: 700;
+    cursor: pointer; transition: 0.14s;
+  }
+  .btn:hover { border-color: var(--cyan); color: var(--cyan); background: #1e2d52; }
+  .btn.primary { background: linear-gradient(135deg, #00f5d4, #0284c7); color: #04101f; border: none; }
+  .sidebar {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 16px; padding: 14px; display: flex; flex-direction: column;
+    gap: 12px; overflow-y: auto;
+  }
+  .card {
+    background: rgba(6, 11, 24, 0.8); border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 12px; padding: 12px;
+  }
+  .card h3 { margin: 0 0 8px; font-size: 13px; color: var(--cyan); }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12.5px; margin: 6px 0; }
+  input[type="text"], input[type="password"] {
+    width: 100%; background: #050914; border: 1px solid var(--border);
+    color: var(--text); border-radius: 8px; padding: 8px 10px; font-size: 13px;
+    outline: none; user-select: text;
+  }
+  input[type="text"]:focus, input[type="password"]:focus { border-color: var(--cyan); }
+  input[type="range"] { flex: 1; accent-color: var(--cyan); }
+  .hint { font-size: 11.5px; color: var(--dim); line-height: 1.5; }
+  #pinOverlay {
+    position: fixed; inset: 0; background: rgba(3, 6, 15, 0.92);
+    backdrop-filter: blur(8px); display: none; align-items: center; justify-content: center; z-index: 99;
+  }
+  .pin-box {
+    width: min(360px, 92vw); background: var(--panel); border: 1px solid var(--cyan);
+    border-radius: 16px; padding: 22px; text-align: center;
+  }
+  .pin-err { color: var(--red); font-size: 12px; min-height: 18px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">📱 Remote Screen :3000 <span id="deviceLbl" class="pill">กำลังเชื่อมต่อ...</span></div>
+  <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+    <span id="accBadge" class="pill">Accessibility: ...</span>
+    <button class="btn" onclick="reloadStream()">🔄 รีเชื่อมต่อภาพ</button>
+    <button class="btn" onclick="downloadSnapshot()">📸 แคปภาพ</button>
+  </div>
+</header>
+
+<div class="main">
+  <div class="stage-wrap">
+    <div class="phone-frame" id="phoneFrame">
+      <img id="screenImg" alt="Mobile Screen Stream" draggable="false" />
+    </div>
+    <div class="nav-bar">
+      <button class="btn" onclick="sendAction('back')">◀ Back</button>
+      <button class="btn" onclick="sendAction('home')">● Home</button>
+      <button class="btn" onclick="sendAction('recents')">▢ Recents</button>
+      <button class="btn" onclick="sendAction('notifications')">🔔 แจ้งเตือน</button>
+      <button class="btn" onclick="sendAction('quick_settings')">⚡ ตั้งค่าด่วน</button>
+      <button class="btn" onclick="sendAction('lock')">🔒 ล็อกจอ</button>
+    </div>
+  </div>
+
+  <div class="sidebar">
+    <div class="card">
+      <h3>⌨️ พิมพ์ข้อความส่งไปมือถือ</h3>
+      <input type="text" id="textInput" placeholder="แตะช่องพิมพ์บนมือถือก่อน แล้วพิมพ์ที่นี่..." onkeydown="if(event.key==='Enter') sendText()" />
+      <div style="display:flex; gap:6px; margin-top:8px;">
+        <button class="btn primary" style="flex:1;" onclick="sendText(true)">ส่งข้อความ (ต่อท้าย)</button>
+        <button class="btn" onclick="sendText(false)">แทนที่</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>⚙️ คุณภาพภาพ & ความลื่น</h3>
+      <div class="row">
+        <span>FPS (<strong id="fpsVal">15</strong>)</span>
+        <input type="range" id="fpsRange" min="5" max="30" value="15" onchange="applySettings()" oninput="document.getElementById('fpsVal').textContent=this.value">
+      </div>
+      <div class="row">
+        <span>Quality (<strong id="qualVal">65</strong>%)</span>
+        <input type="range" id="qualRange" min="25" max="90" value="65" onchange="applySettings()" oninput="document.getElementById('qualVal').textContent=this.value">
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>🕹️ วิธีควบคุมด้วยเมาส์</h3>
+      <div class="hint">
+        • <b>คลิกซ้าย</b>: แตะหน้าจอมือถือ<br>
+        • <b>คลิกซ้ายค้างแล้วลาก</b>: ปัดหน้าจอ (Swipe)<br>
+        • <b>คลิกขวา</b> หรือ <b>กดค้าง &gt; 0.5 วิ</b>: กดค้าง (Long Press)<br>
+        • <b>ลูกกลิ้งเมาส์</b>: เลื่อนหน้าจอขึ้น/ลง
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>📋 สถานะล่าสุด</h3>
+      <div id="logBox" class="hint">พร้อมใช้งาน</div>
+    </div>
+  </div>
+</div>
+
+<div id="pinOverlay">
+  <div class="pin-box">
+    <h2 style="margin:0 0 6px; color:var(--cyan);">🔐 ใส่รหัส PIN จากมือถือ</h2>
+    <p class="hint" style="margin:0 0 12px;">ดูรหัส PIN 6 หลักได้บนหน้าจอแอป Remote Screen :3000</p>
+    <input type="password" id="pinInput" maxlength="6" placeholder="กรอก PIN 6 หลัก" style="text-align:center; font-size:18px; letter-spacing:4px;" onkeydown="if(event.key==='Enter') verifyPin()" />
+    <button class="btn primary" style="width:100%; margin-top:12px; padding:10px;" onclick="verifyPin()">เชื่อมต่อ</button>
+    <div id="pinErr" class="pin-err"></div>
+  </div>
+</div>
+
+<script>
+  let currentPin = sessionStorage.getItem('remote3000_pin') || '';
+  const img = document.getElementById('screenImg');
+  const frame = document.getElementById('phoneFrame');
+  const logBox = document.getElementById('logBox');
+
+  function setLog(msg) {
+    logBox.textContent = new Date().toLocaleTimeString() + ' — ' + msg;
+  }
+
+  async function init() {
+    try {
+      const res = await fetch('/api/info');
+      const info = await res.json();
+      document.getElementById('deviceLbl').textContent = info.device || 'Android';
+      document.getElementById('fpsRange').value = info.fps || 15;
+      document.getElementById('fpsVal').textContent = info.fps || 15;
+      document.getElementById('qualRange').value = info.quality || 65;
+      document.getElementById('qualVal').textContent = info.quality || 65;
+
+      const acc = document.getElementById('accBadge');
+      if (info.accessibility) {
+        acc.textContent = '✅ ควบคุมหน้าจอได้';
+        acc.className = 'pill ok';
+      } else {
+        acc.textContent = '⚠️ ดูได้อย่างเดียว (เปิด Accessibility บนมือถือ)';
+        acc.className = 'pill warn';
+      }
+
+      if (info.pinRequired) {
+        if (currentPin) {
+          const v = await fetch('/api/verify?pin=' + encodeURIComponent(currentPin));
+          if (v.ok) {
+            startStream();
+            return;
+          }
+        }
+        document.getElementById('pinOverlay').style.display = 'flex';
+        document.getElementById('pinInput').focus();
+      } else {
+        startStream();
+      }
+    } catch (e) {
+      setLog('เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ: ' + e.message);
+    }
+  }
+
+  async function verifyPin() {
+    const val = document.getElementById('pinInput').value.trim();
+    const err = document.getElementById('pinErr');
+    err.textContent = '';
+    const res = await fetch('/api/verify?pin=' + encodeURIComponent(val));
+    if (res.ok) {
+      currentPin = val;
+      sessionStorage.setItem('remote3000_pin', currentPin);
+      document.getElementById('pinOverlay').style.display = 'none';
+      startStream();
+    } else {
+      err.textContent = '❌ รหัส PIN ไม่ถูกต้อง';
+    }
+  }
+
+  function startStream() {
+    img.src = '/stream.mjpeg?pin=' + encodeURIComponent(currentPin) + '&t=' + Date.now();
+    setLog('เชื่อมต่อสตรีมหน้าจอแล้ว');
+  }
+
+  function reloadStream() {
+    init();
+  }
+
+  function downloadSnapshot() {
+    const a = document.createElement('a');
+    a.href = '/api/frame.jpg?pin=' + encodeURIComponent(currentPin) + '&t=' + Date.now();
+    a.download = 'phone_screen_' + Date.now() + '.jpg';
+    a.click();
+  }
+
+  async function postControl(payload) {
+    try {
+      const res = await fetch('/api/control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Pin': currentPin },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!data.ok && data.error) setLog('⚠️ ' + data.error);
+      return data;
+    } catch (e) {
+      setLog('ส่งคำสั่งไม่สำเร็จ: ' + e.message);
+    }
+  }
+
+  function sendAction(action) {
+    postControl({ type: 'action', action });
+    setLog('กดปุ่ม: ' + action);
+  }
+
+  function sendText(append = true) {
+    const inp = document.getElementById('textInput');
+    const txt = inp.value;
+    if (!txt) return;
+    postControl({ type: 'text', text: txt, append });
+    setLog('ส่งข้อความ: ' + txt);
+    inp.value = '';
+  }
+
+  function applySettings() {
+    const fps = parseInt(document.getElementById('fpsRange').value, 10);
+    const quality = parseInt(document.getElementById('qualRange').value, 10);
+    postControl({ type: 'settings', fps, quality });
+    setLog(`ตั้งค่า ${fps} FPS / คุณภาพ ${quality}%`);
+  }
+
+  function showRipple(clientX, clientY) {
+    const rect = frame.getBoundingClientRect();
+    const el = document.createElement('div');
+    el.className = 'ripple';
+    el.style.left = (clientX - rect.left) + 'px';
+    el.style.top = (clientY - rect.top) + 'px';
+    frame.appendChild(el);
+    setTimeout(() => el.remove(), 380);
+  }
+
+  function getNormCoords(e) {
+    const rect = img.getBoundingClientRect();
+    const x = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    const y = Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height));
+    return { x, y };
+  }
+
+  let dragStart = null;
+  img.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    const p = getNormCoords(e);
+    showRipple(e.clientX, e.clientY);
+    postControl({ type: 'longpress', x: p.x, y: p.y, duration: 700 });
+    setLog(`Long Press (${(p.x*100).toFixed(0)}%, ${(p.y*100).toFixed(0)}%)`);
+  });
+
+  img.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    img.setPointerCapture(e.pointerId);
+    const p = getNormCoords(e);
+    dragStart = { x: p.x, y: p.y, cx: e.clientX, cy: e.clientY, t: Date.now() };
+  });
+
+  img.addEventListener('pointerup', (e) => {
+    if (!dragStart) return;
+    const p = getNormCoords(e);
+    const dx = Math.abs(e.clientX - dragStart.cx);
+    const dy = Math.abs(e.clientY - dragStart.cy);
+    const dt = Date.now() - dragStart.t;
+
+    showRipple(e.clientX, e.clientY);
+    if (dx > 12 || dy > 12) {
+      postControl({
+        type: 'swipe',
+        x1: dragStart.x, y1: dragStart.y,
+        x2: p.x, y2: p.y,
+        duration: Math.min(900, Math.max(100, dt))
+      });
+      setLog('ปัดหน้าจอ (Swipe)');
+    } else if (dt >= 480) {
+      postControl({ type: 'longpress', x: p.x, y: p.y, duration: Math.min(2000, dt) });
+      setLog(`กดค้าง (${dt}ms)`);
+    } else {
+      postControl({ type: 'tap', x: p.x, y: p.y });
+      setLog(`แตะ (${(p.x*100).toFixed(0)}%, ${(p.y*100).toFixed(0)}%)`);
+    }
+    dragStart = null;
+  });
+
+  let wheelLock = false;
+  img.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    if (wheelLock) return;
+    wheelLock = true;
+    setTimeout(() => { wheelLock = false; }, 180);
+    const p = getNormCoords(e);
+    const delta = e.deltaY > 0 ? -0.22 : 0.22;
+    const y2 = Math.min(0.95, Math.max(0.05, p.y + delta));
+    postControl({ type: 'swipe', x1: p.x, y1: p.y, x2: p.x, y2, duration: 180 });
+  }, { passive: false });
+
+  init();
+</script>
+</body>
+</html>
