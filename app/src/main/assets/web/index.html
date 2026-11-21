@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>📱 Remote Screen :3000 v2 — Virtual Phone + UltraViewer Control</title>
+<title>📱 Remote Screen :3000 v2.2 — 60 FPS • 4K • Multi-Device</title>
 <style>
   :root {
     --bg: #050914;
@@ -31,22 +31,22 @@
     padding: 8px 14px; background: rgba(7, 12, 24, 0.96);
     border-bottom: 1px solid var(--border); flex-wrap: wrap; z-index: 10;
   }
-  .brand { font-weight: 800; font-size: 14.5px; color: var(--cyan); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .brand { font-weight: 800; font-size: 14px; color: var(--cyan); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .pill {
-    font-size: 11.5px; padding: 3px 9px; border-radius: 999px;
+    font-size: 11px; padding: 3px 8px; border-radius: 999px;
     background: rgba(15, 23, 42, 0.9); border: 1px solid var(--border); color: var(--dim);
   }
   .pill.ok { color: var(--green); border-color: rgba(16, 185, 129, 0.5); }
   .pill.warn { color: var(--gold); border-color: rgba(251, 191, 36, 0.5); }
+  .pill.danger { color: #fca5a5; border-color: rgba(239, 68, 68, 0.6); background: rgba(127, 29, 29, 0.4); }
   .main {
     flex: 1; min-height: 0; display: grid;
-    grid-template-columns: 1fr 340px; gap: 12px; padding: 12px;
+    grid-template-columns: 1fr 355px; gap: 12px; padding: 12px;
   }
-  @media (max-width: 900px) {
+  @media (max-width: 920px) {
     .main { grid-template-columns: 1fr; overflow-y: auto; }
   }
 
-  /* Virtual Smartphone Bezel Stage */
   .stage-wrap {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     background: rgba(4, 8, 18, 0.78); border: 1px solid var(--border);
@@ -55,61 +55,79 @@
   .stage-wrap:fullscreen, .stage-wrap:-webkit-full-screen {
     background: #02050c; border-radius: 0; border: none; padding: 10px;
   }
+  .lock-banner {
+    display: none; position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+    z-index: 25; background: rgba(127, 29, 29, 0.92); border: 1px solid #f87171;
+    color: #fff; padding: 8px 14px; border-radius: 999px; font-size: 12px; font-weight: 700;
+    align-items: center; gap: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.7);
+  }
+  .lock-banner.show { display: flex; }
+
   .phone-shell {
     position: relative; display: flex; align-items: center; justify-content: center;
-    height: 100%; max-height: 100%; max-width: 100%;
+    height: 100%; width: 100%; max-height: 100%; max-width: 100%;
   }
+  /* Portrait Phone Layout (default) */
   .phone-body {
     position: relative; display: flex; flex-direction: column; align-items: center;
     background: linear-gradient(160deg, #1a243a, #0b1120);
     border: 2.5px solid #334155;
-    border-radius: 34px; padding: 12px 10px 10px;
+    border-radius: 32px; padding: 12px 10px 10px;
     box-shadow: 0 24px 70px rgba(0, 0, 0, 0.85), inset 0 0 0 1px rgba(255,255,255,0.08);
-    height: 100%; max-height: 100%; max-width: 100%;
+    height: 100%; max-height: 100%; max-width: calc(100% - 88px);
+    transition: all 0.2s ease;
+  }
+  /* Landscape Phone Layout (auto-activated when phone rotates!) */
+  .phone-body.landscape {
+    flex-direction: row; height: auto; width: 100%;
+    max-width: calc(100% - 88px); max-height: 92%;
+    padding: 10px 12px;
   }
   .phone-speaker {
     width: 54px; height: 5px; border-radius: 99px; background: #1e293b;
     margin-bottom: 8px; flex-shrink: 0; position: relative;
   }
-  .phone-speaker::after {
-    content: ""; position: absolute; right: -16px; top: -2px;
-    width: 9px; height: 9px; border-radius: 50%; background: #0f172a;
-    border: 1.5px solid #334155;
+  .phone-body.landscape .phone-speaker {
+    width: 5px; height: 54px; margin-bottom: 0; margin-right: 8px;
   }
   .phone-screen-wrap {
-    position: relative; flex: 1; min-height: 0; max-width: 100%;
+    position: relative; flex: 1; min-height: 0; min-width: 0;
     border-radius: 18px; overflow: hidden; background: #000;
-    border: 1px solid rgba(0, 245, 212, 0.22);
+    border: 1px solid rgba(0, 245, 212, 0.25);
     display: flex; align-items: center; justify-content: center;
   }
   #screenImg {
-    display: block; max-height: 100%; max-width: 100%; height: 100%; width: auto;
+    display: block; max-height: 100%; max-width: 100%;
     object-fit: contain; cursor: pointer; touch-action: none; -webkit-user-drag: none;
+  }
+  .phone-body:not(.landscape) #screenImg { height: 100%; width: auto; }
+  .phone-body.landscape #screenImg { width: 100%; height: auto; max-height: 78vh; }
+
+  #realtimeKeyCatcher {
+    position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; top: 0; left: 0;
   }
   .phone-bottom-nav {
     display: flex; align-items: center; justify-content: space-around;
     width: 100%; gap: 8px; padding-top: 8px; flex-shrink: 0;
   }
+  .phone-body.landscape .phone-bottom-nav {
+    flex-direction: column; width: auto; height: 100%; padding-top: 0; padding-left: 8px;
+  }
   .hw-nav-btn {
     flex: 1; background: rgba(15, 23, 42, 0.9); color: #e2e8f0;
     border: 1px solid rgba(148, 163, 184, 0.25); border-radius: 12px;
-    padding: 7px 6px; font-size: 13px; font-weight: 800; cursor: pointer;
-    transition: 0.12s;
+    padding: 7px 10px; font-size: 13px; font-weight: 800; cursor: pointer; transition: 0.12s;
   }
   .hw-nav-btn:hover { border-color: var(--cyan); color: var(--cyan); background: #172540; }
-  .hw-nav-btn:active { transform: scale(0.96); }
 
-  /* Physical Side Buttons on Right Edge of Virtual Phone */
   .side-hw-buttons {
-    display: flex; flex-direction: column; gap: 8px; margin-left: 8px;
+    display: flex; flex-direction: column; gap: 6px; margin-left: 8px; flex-shrink: 0;
   }
   .side-btn {
-    writing-mode: horizontal-tb;
     background: linear-gradient(180deg, #1e293b, #0f172a);
     color: #e2e8f0; border: 1px solid rgba(56, 189, 248, 0.35);
-    border-radius: 10px; padding: 10px 8px; font-size: 11.5px; font-weight: 800;
-    cursor: pointer; min-width: 68px; text-align: center;
-    box-shadow: 0 6px 18px rgba(0,0,0,0.45); transition: 0.12s;
+    border-radius: 10px; padding: 8px 7px; font-size: 11px; font-weight: 800;
+    cursor: pointer; min-width: 72px; text-align: center; transition: 0.12s;
   }
   .side-btn:hover { border-color: var(--cyan); color: var(--cyan); transform: translateX(2px); }
   .side-btn.wake { border-color: rgba(251, 191, 36, 0.55); color: var(--gold); }
@@ -120,7 +138,7 @@
     position: absolute; width: 28px; height: 28px; margin: -14px 0 0 -14px;
     border-radius: 50%; border: 2px solid var(--cyan);
     background: rgba(0, 245, 212, 0.3); pointer-events: none;
-    animation: pop 0.32s ease-out forwards;
+    animation: pop 0.3s ease-out forwards;
   }
   @keyframes pop {
     from { transform: scale(0.35); opacity: 1; }
@@ -129,48 +147,49 @@
 
   .btn {
     background: #16223d; color: var(--text); border: 1px solid var(--border);
-    border-radius: 8px; padding: 6px 10px; font-size: 12px; font-weight: 700;
+    border-radius: 8px; padding: 6px 9px; font-size: 11.5px; font-weight: 700;
     cursor: pointer; transition: 0.12s;
   }
   .btn:hover { border-color: var(--cyan); color: var(--cyan); background: #1e2d52; }
   .btn.primary { background: linear-gradient(135deg, #00f5d4, #0284c7); color: #04101f; border: none; }
-  .btn.active { border-color: var(--cyan); background: rgba(0, 245, 212, 0.16); color: var(--cyan); }
+  .btn.active { border-color: var(--cyan); background: rgba(0, 245, 212, 0.18); color: var(--cyan); }
 
-  /* Right Sidebar (UltraViewer Chat + Keyboard + Stream + OTA Update) */
   .sidebar {
     background: var(--panel); border: 1px solid var(--border);
-    border-radius: 16px; padding: 12px; display: flex; flex-direction: column;
-    gap: 10px; overflow-y: auto;
+    border-radius: 16px; padding: 11px; display: flex; flex-direction: column;
+    gap: 9px; overflow-y: auto;
   }
   .card {
     background: var(--card); border: 1px solid rgba(148, 163, 184, 0.16);
-    border-radius: 12px; padding: 10px 12px;
+    border-radius: 12px; padding: 10px 11px;
   }
-  .card h3 { margin: 0 0 8px; font-size: 12.5px; color: var(--cyan); display: flex; align-items: center; justify-content: space-between; }
-  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; margin: 5px 0; }
-  input[type="text"], input[type="password"] {
+  .card h3 { margin: 0 0 6px; font-size: 12px; color: var(--cyan); display: flex; align-items: center; justify-content: space-between; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11.5px; margin: 4px 0; }
+  input[type="text"], input[type="password"], select {
     width: 100%; background: #040812; border: 1px solid var(--border);
-    color: var(--text); border-radius: 8px; padding: 7px 10px; font-size: 12.5px;
+    color: var(--text); border-radius: 8px; padding: 7px 9px; font-size: 12px;
     outline: none; user-select: text;
   }
-  input[type="text"]:focus, input[type="password"]:focus { border-color: var(--cyan); }
   input[type="range"] { flex: 1; accent-color: var(--cyan); }
-  .hint { font-size: 11px; color: var(--dim); line-height: 1.45; }
-
-  /* UltraViewer Chat Box */
+  .hint { font-size: 11px; color: var(--dim); line-height: 1.4; }
+  .client-list {
+    max-height: 100px; overflow-y: auto; background: #040812;
+    border: 1px solid rgba(148, 163, 184, 0.15); border-radius: 8px;
+    padding: 6px 8px; font-size: 11px; line-height: 1.5; user-select: text;
+  }
   .chat-box {
-    height: 155px; overflow-y: auto; background: #040812;
+    height: 120px; overflow-y: auto; background: #040812;
     border: 1px solid rgba(148, 163, 184, 0.16); border-radius: 8px;
-    padding: 8px; display: flex; flex-direction: column; gap: 6px;
-    margin-bottom: 8px; user-select: text;
+    padding: 7px; display: flex; flex-direction: column; gap: 5px;
+    margin-bottom: 6px; user-select: text;
   }
   .chat-msg {
-    max-width: 88%; padding: 6px 9px; border-radius: 10px;
-    font-size: 12px; line-height: 1.35; word-break: break-word;
+    max-width: 88%; padding: 5px 8px; border-radius: 9px;
+    font-size: 11.5px; line-height: 1.35; word-break: break-word;
   }
   .chat-msg.pc { align-self: flex-end; background: rgba(2, 132, 199, 0.35); border: 1px solid rgba(56, 189, 248, 0.45); }
   .chat-msg.phone { align-self: flex-start; background: rgba(16, 185, 129, 0.22); border: 1px solid rgba(16, 185, 129, 0.45); }
-  .chat-meta { font-size: 10px; color: var(--dim); margin-bottom: 2px; }
+  .chat-meta { font-size: 9.5px; color: var(--dim); margin-bottom: 2px; }
 
   #pinOverlay {
     position: fixed; inset: 0; background: rgba(3, 6, 15, 0.92);
@@ -189,7 +208,8 @@
     📱 Remote Screen :3000
     <span id="deviceLbl" class="pill">กำลังเชื่อมต่อ...</span>
     <span id="wsBadge" class="pill">WS: ...</span>
-    <span id="accBadge" class="pill">Accessibility: ...</span>
+    <span id="ctrlBadge" class="pill ok">🎮 คุมจอได้</span>
+    <span id="orientBadge" class="pill">📱 แนวตั้ง</span>
   </div>
   <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
     <button class="btn" onclick="sendCmd({type:'wake'})">💡 เปิดจอ</button>
@@ -202,93 +222,128 @@
 <div class="main">
   <!-- Virtual Smartphone Area -->
   <div class="stage-wrap" id="stageWrap">
+    <div id="lockBanner" class="lock-banner">
+      <span id="lockBannerText">🔒 หน้าจอมือถือปิดหรือล็อกอยู่ (Android ปิดภาพหน้าล็อก PIN เพื่อความปลอดภัย)</span>
+      <button class="btn primary" onclick="sendCmd({type:'wake'})">💡 กดเปิดจอ</button>
+    </div>
+
     <div class="phone-shell">
-      <div class="phone-body">
+      <div class="phone-body" id="phoneBody">
         <div class="phone-speaker"></div>
         <div class="phone-screen-wrap" id="phoneFrame">
           <img id="screenImg" alt="Mobile Screen Stream" draggable="false" />
+          <input id="realtimeKeyCatcher" type="text" autocomplete="off" spellcheck="false" />
         </div>
         <div class="phone-bottom-nav">
-          <button class="hw-nav-btn" onclick="sendCmd({type:'action',action:'back'})" title="Back">◀</button>
-          <button class="hw-nav-btn" onclick="sendCmd({type:'action',action:'home'})" title="Home">●</button>
-          <button class="hw-nav-btn" onclick="sendCmd({type:'action',action:'recents'})" title="Recents">▢</button>
+          <button class="hw-nav-btn" onclick="sendCmd({type:'action',action:'back'})">◀</button>
+          <button class="hw-nav-btn" onclick="sendCmd({type:'action',action:'home'})">●</button>
+          <button class="hw-nav-btn" onclick="sendCmd({type:'action',action:'recents'})">▢</button>
         </div>
       </div>
 
-      <!-- Physical-style side buttons next to phone bezel -->
       <div class="side-hw-buttons">
-        <button class="side-btn fs" onclick="toggleFullscreen()" title="เต็มจอ / ออกเต็มจอ">⛶ เต็มจอ</button>
-        <button class="side-btn wake" onclick="sendCmd({type:'wake'})" title="ปลุกหน้าจอมือถือ">💡 เปิดจอ</button>
-        <button class="side-btn" onclick="sendCmd({type:'volume',direction:'up'})" title="เพิ่มเสียง">🔊 Vol +</button>
-        <button class="side-btn" onclick="sendCmd({type:'volume',direction:'down'})" title="ลดเสียง">🔉 Vol -</button>
-        <button class="side-btn" onclick="sendCmd({type:'action',action:'notifications'})" title="แถบแจ้งเตือน">🔔 แจ้งเตือน</button>
-        <button class="side-btn" onclick="sendCmd({type:'action',action:'quick_settings'})" title="ตั้งค่าด่วน">⚡ ตั้งค่า</button>
-        <button class="side-btn power" onclick="sendCmd({type:'action',action:'lock'})" title="ล็อกหน้าจอ">🔒 ล็อกจอ</button>
-        <button class="side-btn power" onclick="sendCmd({type:'action',action:'power'})" title="เมนู Power">⏻ Power</button>
+        <button class="side-btn fs" onclick="toggleFullscreen()">⛶ เต็มจอ</button>
+        <button class="side-btn wake" onclick="sendCmd({type:'wake'})">💡 เปิดจอ</button>
+        <button class="side-btn" onclick="sendCmd({type:'volume',direction:'up'})">🔊 Vol +</button>
+        <button class="side-btn" onclick="sendCmd({type:'volume',direction:'down'})">🔉 Vol -</button>
+        <button class="side-btn" onclick="sendCmd({type:'action',action:'notifications'})">🔔 แจ้งเตือน</button>
+        <button class="side-btn" onclick="sendCmd({type:'action',action:'quick_settings'})">⚡ ตั้งค่า</button>
+        <button class="side-btn power" onclick="sendCmd({type:'action',action:'lock'})">🔒 ล็อกจอ</button>
+        <button class="side-btn power" onclick="sendCmd({type:'action',action:'power'})">⏻ Power</button>
       </div>
     </div>
   </div>
 
   <!-- Right Control Sidebar -->
   <div class="sidebar">
-    <!-- UltraViewer-style 2-way Chat -->
+    <!-- Connected Devices & Security Monitor -->
     <div class="card">
-      <h3>💬 แชทสดกับมือถือ (แบบ UltraViewer)</h3>
-      <div class="chat-box" id="chatBox">
-        <div class="hint">ยังไม่มีข้อความ — พิมพ์คุยกับฝั่งมือถือได้แบบเรียลไทม์</div>
+      <h3>👥 ผู้เข้าใช้งานตอนนี้ (PC + Mac พร้อมกัน) <span id="clientCountBadge" style="color:var(--green);">0</span></h3>
+      <div id="phoneIpInfo" class="hint" style="margin-bottom:5px; color:var(--cyan);">📱 มือถือ: ...</div>
+      <div id="clientListBox" class="client-list">กำลังตรวจสอบอุปกรณ์ที่เชื่อมต่อ...</div>
+    </div>
+
+    <!-- Realtime PC Keyboard -->
+    <div class="card">
+      <h3>
+        ⌨️ พิมพ์สดคีย์บอร์ดคอม (Realtime)
+        <input type="checkbox" id="chkRealtimeKb" checked style="accent-color:var(--cyan); cursor:pointer;" />
+      </h3>
+      <div class="hint" style="margin-bottom:5px;">คลิกช่องพิมพ์บนจอมือถือแล้วพิมพ์บนคอมได้ทันที (ไทย/อังกฤษ, Enter, Backspace, Ctrl+V)</div>
+      <div style="display:flex; gap:5px;">
+        <input type="text" id="textInput" placeholder="หรือพิมพ์ข้อความยาว ๆ แล้วกดส่ง..." onkeydown="if(event.key==='Enter') sendText(true)" />
+        <button class="btn primary" onclick="sendText(true)">ส่ง</button>
       </div>
-      <div style="display:flex; gap:6px;">
+      <div style="display:flex; gap:5px; margin-top:5px;">
+        <button class="btn" style="flex:1;" onclick="sendCmd({type:'enter'})">↵ Enter</button>
+        <button class="btn" style="flex:1;" onclick="sendCmd({type:'backspace'})">⌫ ลบ</button>
+        <button class="btn" style="flex:1;" onclick="sendText(false)">แทนที่</button>
+      </div>
+    </div>
+
+    <!-- Audio Output Selector -->
+    <div class="card">
+      <h3>🔊 เลือกทางออกเสียง (คอม / มือถือ)</h3>
+      <div style="display:flex; gap:5px; margin-bottom:5px;">
+        <button class="btn active" id="btnAudioPhone" style="flex:1;" onclick="setAudioOutput('phone')">📱 มือถือ</button>
+        <button class="btn" id="btnAudioPc" style="flex:1;" onclick="setAudioOutput('pc')">💻 คอม</button>
+        <button class="btn" id="btnAudioBoth" style="flex:1;" onclick="setAudioOutput('both')">🔊 ทั้งคู่</button>
+      </div>
+      <div class="row">
+        <span>เสียงคอม (<strong id="pcVolVal">100</strong>%)</span>
+        <input type="range" id="pcVolRange" min="0" max="150" value="100" oninput="setPcAudioVolume(this.value)">
+      </div>
+      <div id="sinkWrap" style="display:none; margin-top:4px;">
+        <select id="pcSpeakerSelect" onchange="changePcSpeaker(this.value)"></select>
+      </div>
+      <div id="audioStatus" class="hint" style="margin-top:3px;">เสียงออกที่มือถือ</div>
+    </div>
+
+    <!-- 60 FPS & 4K Quality Controls -->
+    <div class="card">
+      <h3>⚡ 60 FPS & คุณภาพ 4K <span id="pingLbl" style="color:var(--dim); font-size:10.5px;"></span></h3>
+      <div style="display:flex; gap:4px; margin-bottom:6px;">
+        <button class="btn active" id="pre4k" style="flex:1;" onclick="setPreset(2160, 60, 78, 'pre4k')">💎 4K 60fps</button>
+        <button class="btn" id="pre1080" style="flex:1;" onclick="setPreset(1080, 60, 65, 'pre1080')">⚡ 1080p 60</button>
+        <button class="btn" id="pre720" style="flex:1;" onclick="setPreset(720, 60, 55, 'pre720')">🚀 720p 60</button>
+      </div>
+      <div class="row">
+        <span>FPS (<strong id="fpsVal">60</strong>)</span>
+        <input type="range" id="fpsRange" min="10" max="60" value="60" onchange="applySettings()" oninput="document.getElementById('fpsVal').textContent=this.value">
+      </div>
+      <div class="row">
+        <span>Quality (<strong id="qualVal">78</strong>%)</span>
+        <input type="range" id="qualRange" min="25" max="95" value="78" onchange="applySettings()" oninput="document.getElementById('qualVal').textContent=this.value">
+      </div>
+      <div class="row">
+        <span>ความละเอียด (<strong id="edgeVal">2160</strong>p)</span>
+        <input type="range" id="edgeRange" min="360" max="3840" step="180" value="2160" onchange="applySettings()" oninput="document.getElementById('edgeVal').textContent=this.value">
+      </div>
+    </div>
+
+    <!-- UltraViewer-style 2-Way Chat -->
+    <div class="card">
+      <h3>💬 แชทสด 2 ทาง (แบบ UltraViewer)</h3>
+      <div class="chat-box" id="chatBox">
+        <div class="hint">ยังไม่มีข้อความ</div>
+      </div>
+      <div style="display:flex; gap:5px;">
         <input type="text" id="chatInput" placeholder="พิมพ์ข้อความแชทส่งไปมือถือ..." onkeydown="if(event.key==='Enter') sendChat()" />
         <button class="btn primary" onclick="sendChat()">ส่ง</button>
       </div>
     </div>
 
-    <!-- Remote Keyboard & Clipboard -->
-    <div class="card">
-      <h3>⌨️ พิมพ์ข้อความลงช่องพิมพ์บนมือถือ</h3>
-      <input type="text" id="textInput" placeholder="แตะช่องพิมพ์บนมือถือก่อน แล้วพิมพ์ที่นี่..." onkeydown="if(event.key==='Enter') sendText(true)" />
-      <div style="display:flex; gap:5px; margin-top:6px; flex-wrap:wrap;">
-        <button class="btn primary" style="flex:1;" onclick="sendText(true)">พิมพ์ต่อท้าย</button>
-        <button class="btn" onclick="sendPaste()">📋 วาง</button>
-        <button class="btn" onclick="sendCmd({type:'backspace'})">⌫ ลบ</button>
-        <button class="btn" onclick="sendText(false)">แทนที่</button>
-      </div>
-    </div>
-
-    <!-- Smoothness / Performance Presets -->
-    <div class="card">
-      <h3>⚡ ความลื่น & ความคมชัด <span id="pingLbl" style="color:var(--dim); font-size:11px;"></span></h3>
-      <div style="display:flex; gap:5px; margin-bottom:6px;">
-        <button class="btn" style="flex:1;" onclick="setPreset(480, 30, 48)">⚡ ลื่นสุด</button>
-        <button class="btn" style="flex:1;" onclick="setPreset(720, 24, 55)">⚖️ สมดุล</button>
-        <button class="btn" style="flex:1;" onclick="setPreset(960, 18, 72)">💎 คมชัด</button>
-      </div>
-      <div class="row">
-        <span>FPS (<strong id="fpsVal">24</strong>)</span>
-        <input type="range" id="fpsRange" min="5" max="30" value="24" onchange="applySettings()" oninput="document.getElementById('fpsVal').textContent=this.value">
-      </div>
-      <div class="row">
-        <span>Quality (<strong id="qualVal">55</strong>%)</span>
-        <input type="range" id="qualRange" min="25" max="90" value="55" onchange="applySettings()" oninput="document.getElementById('qualVal').textContent=this.value">
-      </div>
-      <div class="row">
-        <span>ความละเอียด (<strong id="edgeVal">720</strong>p)</span>
-        <input type="range" id="edgeRange" min="360" max="1080" step="60" value="720" onchange="applySettings()" oninput="document.getElementById('edgeVal').textContent=this.value">
-      </div>
-    </div>
-
     <!-- OTA Push APK Update -->
     <div class="card">
-      <h3>🔄 อัปเดตแอป APK ไปยังมือถือทันที</h3>
-      <div class="hint" style="margin-bottom:6px;">เลือกไฟล์ <b>.apk</b> เวอร์ชันใหม่จากคอมแล้วกดส่ง มือถือจะเด้งหน้าติดตั้งอัปเดตทันที (ไม่ต้องส่งผ่านเมล/USB)</div>
-      <input type="file" id="apkFileInput" accept=".apk" style="font-size:11.5px; color:var(--dim); width:100%; margin-bottom:6px;" />
+      <h3>🔄 อัปเดตแอป APK ไร้สาย</h3>
+      <input type="file" id="apkFileInput" accept=".apk" style="font-size:11px; color:var(--dim); width:100%; margin-bottom:5px;" />
       <button class="btn primary" style="width:100%;" id="btnUploadApk" onclick="uploadApkUpdate()">🚀 ส่งอัปเดต APK ไปมือถือ</button>
-      <div id="otaStatus" class="hint" style="margin-top:5px;"></div>
+      <div id="otaStatus" class="hint" style="margin-top:4px;"></div>
     </div>
 
     <div class="card">
       <h3>📋 สถานะ</h3>
-      <div id="logBox" class="hint">พร้อมใช้งาน • คลิกซ้าย=แตะ | ลาก=ปัด | คลิกขวา=กดค้าง | ลูกกลิ้ง=เลื่อน</div>
+      <div id="logBox" class="hint">พร้อมใช้งาน</div>
     </div>
   </div>
 </div>
@@ -307,14 +362,226 @@
   let currentPin = sessionStorage.getItem('remote3000_pin') || '';
   let ws = null;
   let pingTimer = null;
+  let audioAbort = null;
+  let audioCtx = null;
+  let gainNode = null;
+  let pcAudioEl = null;
+
   const img = document.getElementById('screenImg');
   const frame = document.getElementById('phoneFrame');
+  const phoneBody = document.getElementById('phoneBody');
   const logBox = document.getElementById('logBox');
   const chatBox = document.getElementById('chatBox');
+  const keyCatcher = document.getElementById('realtimeKeyCatcher');
   let chatMessages = [];
 
   function setLog(msg) {
     logBox.textContent = new Date().toLocaleTimeString() + ' — ' + msg;
+  }
+
+  function applyOrientation(isLandscape) {
+    phoneBody.classList.toggle('landscape', !!isLandscape);
+    document.getElementById('orientBadge').textContent = isLandscape ? '📱 แนวนอน (Landscape)' : '📱 แนวตั้ง (Portrait)';
+  }
+
+  // Also detect orientation directly from incoming MJPEG natural dimensions
+  img.addEventListener('load', () => {
+    if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+      applyOrientation(img.naturalWidth > img.naturalHeight);
+    }
+  });
+
+  function updateLockAndControlUI(screenOn, locked, controlAllowed) {
+    const banner = document.getElementById('lockBanner');
+    const bTxt = document.getElementById('lockBannerText');
+    if (screenOn === false) {
+      bTxt.textContent = '🌙 หน้าจอมือถือดับอยู่ — กดปุ่มเปิดจอได้เลย';
+      banner.classList.add('show');
+    } else if (locked === true) {
+      bTxt.textContent = '🔒 หน้าจอมือถือล็อกอยู่ (Android ซ่อนหน้าใส่รหัสผ่านเพื่อความปลอดภัย — ปัดขึ้นหรือปลดล็อกที่มือถือ)';
+      banner.classList.add('show');
+    } else {
+      banner.classList.remove('show');
+    }
+
+    if (typeof controlAllowed === 'boolean') {
+      const cb = document.getElementById('ctrlBadge');
+      if (controlAllowed) {
+        cb.textContent = '🎮 คุมจอได้';
+        cb.className = 'pill ok';
+      } else {
+        cb.textContent = '🛡️ เจ้าของปิดการคุมจอ (ดูอย่างเดียว)';
+        cb.className = 'pill danger';
+      }
+    }
+  }
+
+  function renderClientsList(data) {
+    if (data.phoneIp || data.phoneName) {
+      document.getElementById('phoneIpInfo').textContent =
+        `📱 มือถือ: ${data.phoneName || 'Android'} • IP: ${data.phoneIp || location.hostname}`;
+    }
+    const list = data.clients || [];
+    document.getElementById('clientCountBadge').textContent = list.length + ' เครื่อง';
+    const box = document.getElementById('clientListBox');
+    if (!list.length) {
+      box.textContent = 'ยังไม่มีอุปกรณ์เชื่อมต่อ';
+      return;
+    }
+    box.innerHTML = '';
+    for (const c of list) {
+      const div = document.createElement('div');
+      const t = new Date(c.connectedAtMs || Date.now()).toLocaleTimeString();
+      div.textContent = `🟢 ${c.deviceName} • IP: ${c.ip} (${t})`;
+      box.appendChild(div);
+    }
+    updateLockAndControlUI(data.screenOn, data.locked, data.controlAllowed);
+  }
+
+  // Realtime PC Keyboard Catcher (TH/EN IME + Enter + Backspace + Paste)
+  let isComposing = false;
+  keyCatcher.addEventListener('compositionstart', () => { isComposing = true; });
+  keyCatcher.addEventListener('compositionend', () => {
+    isComposing = false;
+    const val = keyCatcher.value;
+    if (val) {
+      sendCmd({ type: 'text', text: val, append: true });
+      keyCatcher.value = '';
+    }
+  });
+  keyCatcher.addEventListener('input', () => {
+    if (isComposing) return;
+    const val = keyCatcher.value;
+    if (val) {
+      sendCmd({ type: 'text', text: val, append: true });
+      keyCatcher.value = '';
+    }
+  });
+  keyCatcher.addEventListener('keydown', (e) => {
+    if (!document.getElementById('chkRealtimeKb').checked) return;
+    if (e.key === 'Backspace') { e.preventDefault(); sendCmd({ type: 'backspace' }); }
+    else if (e.key === 'Enter') { e.preventDefault(); sendCmd({ type: 'enter' }); }
+  });
+  keyCatcher.addEventListener('paste', (e) => {
+    const pasted = (e.clipboardData || window.clipboardData).getData('text');
+    if (pasted) {
+      e.preventDefault();
+      sendCmd({ type: 'paste', text: pasted });
+      setLog('วางข้อความลงมือถือแล้ว');
+    }
+  });
+  function focusKeyCatcher() {
+    if (document.getElementById('chkRealtimeKb').checked) {
+      keyCatcher.focus({ preventScroll: true });
+    }
+  }
+
+  // Audio Output Selector & PCM Web Audio Player
+  function updateAudioButtons(mode) {
+    document.getElementById('btnAudioPhone').classList.toggle('active', mode === 'phone');
+    document.getElementById('btnAudioPc').classList.toggle('active', mode === 'pc');
+    document.getElementById('btnAudioBoth').classList.toggle('active', mode === 'both');
+  }
+  async function setAudioOutput(mode) {
+    updateAudioButtons(mode);
+    const st = document.getElementById('audioStatus');
+    st.textContent = '⏳ กำลังสลับทางออกเสียง...';
+    try {
+      const res = await fetch('/api/control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Pin': currentPin },
+        body: JSON.stringify({ type: 'audio_output', mode })
+      });
+      const data = await res.json();
+      st.textContent = (data.ok ? '✅ ' : '⚠️ ') + (data.message || mode);
+      if (data.ok && (mode === 'pc' || mode === 'both')) {
+        startPcAudioStream();
+        loadPcSpeakers();
+      } else {
+        stopPcAudioStream();
+      }
+    } catch (e) {
+      st.textContent = '❌ สลับเสียงไม่สำเร็จ: ' + e.message;
+    }
+  }
+  function setPcAudioVolume(val) {
+    document.getElementById('pcVolVal').textContent = val;
+    if (gainNode) gainNode.gain.value = parseFloat(val) / 100.0;
+  }
+  async function loadPcSpeakers() {
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const outs = devices.filter(d => d.kind === 'audiooutput');
+      if (outs.length > 0 && pcAudioEl && typeof pcAudioEl.setSinkId === 'function') {
+        const sel = document.getElementById('pcSpeakerSelect');
+        sel.innerHTML = '';
+        outs.forEach((d, idx) => {
+          const opt = document.createElement('option');
+          opt.value = d.deviceId;
+          opt.textContent = '🎧 ลำโพงคอม: ' + (d.label || ('Output #' + (idx + 1)));
+          sel.appendChild(opt);
+        });
+        document.getElementById('sinkWrap').style.display = 'block';
+      }
+    } catch (_) {}
+  }
+  async function changePcSpeaker(deviceId) {
+    if (pcAudioEl && typeof pcAudioEl.setSinkId === 'function') {
+      try { await pcAudioEl.setSinkId(deviceId); } catch (_) {}
+    }
+  }
+  function stopPcAudioStream() {
+    if (audioAbort) { try { audioAbort.abort(); } catch (_) {} audioAbort = null; }
+    if (audioCtx) { try { audioCtx.close(); } catch (_) {} audioCtx = null; gainNode = null; }
+    if (pcAudioEl) { try { pcAudioEl.pause(); pcAudioEl.srcObject = null; } catch (_) {} pcAudioEl = null; }
+  }
+  async function startPcAudioStream() {
+    stopPcAudioStream();
+    audioAbort = new AbortController();
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    audioCtx = new AudioCtx({ sampleRate: 44100 });
+    gainNode = audioCtx.createGain();
+    gainNode.gain.value = parseFloat(document.getElementById('pcVolRange').value) / 100.0;
+    const dest = audioCtx.createMediaStreamDestination();
+    gainNode.connect(dest);
+    pcAudioEl = new Audio();
+    pcAudioEl.srcObject = dest.stream;
+    pcAudioEl.play().catch(() => {
+      gainNode.disconnect();
+      gainNode.connect(audioCtx.destination);
+    });
+    try {
+      const resp = await fetch('/stream.pcm?pin=' + encodeURIComponent(currentPin) + '&t=' + Date.now(), {
+        signal: audioAbort.signal
+      });
+      const reader = resp.body.getReader();
+      let leftover = new Uint8Array(0);
+      let nextPlayTime = audioCtx.currentTime + 0.05;
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (!value || !value.length) continue;
+        const merged = new Uint8Array(leftover.length + value.length);
+        merged.set(leftover, 0);
+        merged.set(value, leftover.length);
+        const evenLen = merged.length - (merged.length % 2);
+        leftover = merged.slice(evenLen);
+        if (evenLen === 0) continue;
+        const sampleCount = evenLen / 2;
+        const dv = new DataView(merged.buffer, merged.byteOffset, evenLen);
+        const audioBuf = audioCtx.createBuffer(1, sampleCount, 44100);
+        const chData = audioBuf.getChannelData(0);
+        for (let i = 0; i < sampleCount; i++) chData[i] = dv.getInt16(i * 2, true) / 32768.0;
+        const src = audioCtx.createBufferSource();
+        src.buffer = audioBuf;
+        src.connect(gainNode);
+        const now = audioCtx.currentTime;
+        if (nextPlayTime < now || nextPlayTime > now + 0.18) nextPlayTime = now + 0.04;
+        src.start(nextPlayTime);
+        nextPlayTime += audioBuf.duration;
+      }
+    } catch (_) {}
   }
 
   function toggleFullscreen() {
@@ -330,30 +597,22 @@
     try {
       const res = await fetch('/api/info');
       const info = await res.json();
-      document.getElementById('deviceLbl').textContent = (info.device || 'Android') + ' (v' + (info.version || '2.0') + ')';
-      document.getElementById('fpsRange').value = info.fps || 24;
-      document.getElementById('fpsVal').textContent = info.fps || 24;
-      document.getElementById('qualRange').value = info.quality || 55;
-      document.getElementById('qualVal').textContent = info.quality || 55;
-      document.getElementById('edgeRange').value = info.maxEdge || 720;
-      document.getElementById('edgeVal').textContent = info.maxEdge || 720;
-
-      const acc = document.getElementById('accBadge');
-      if (info.accessibility) {
-        acc.textContent = '✅ ควบคุมได้';
-        acc.className = 'pill ok';
-      } else {
-        acc.textContent = '⚠️ ดูได้อย่างเดียว (เปิด Accessibility)';
-        acc.className = 'pill warn';
-      }
+      document.getElementById('deviceLbl').textContent = (info.device || 'Android') + ' (v' + (info.version || '2.2') + ')';
+      document.getElementById('phoneIpInfo').textContent = `📱 มือถือ: ${info.device} • IP: ${info.phoneIp} | คุณ: ${info.yourDevice} (${info.yourIp})`;
+      document.getElementById('fpsRange').value = info.fps || 60;
+      document.getElementById('fpsVal').textContent = info.fps || 60;
+      document.getElementById('qualRange').value = info.quality || 78;
+      document.getElementById('qualVal').textContent = info.quality || 78;
+      document.getElementById('edgeRange').value = info.maxEdge || 2160;
+      document.getElementById('edgeVal').textContent = info.maxEdge || 2160;
+      applyOrientation(info.landscape);
+      updateAudioButtons(info.audioOutput || 'phone');
+      updateLockAndControlUI(info.screenOn, info.locked, info.controlAllowed);
 
       if (info.pinRequired) {
         if (currentPin) {
           const v = await fetch('/api/verify?pin=' + encodeURIComponent(currentPin));
-          if (v.ok) {
-            startConnectedSession();
-            return;
-          }
+          if (v.ok) { startConnectedSession(); return; }
         }
         document.getElementById('pinOverlay').style.display = 'flex';
         document.getElementById('pinInput').focus();
@@ -383,7 +642,7 @@
   function startConnectedSession() {
     img.src = '/stream.mjpeg?pin=' + encodeURIComponent(currentPin) + '&t=' + Date.now();
     connectWebSocket();
-    setLog('เชื่อมต่อสตรีมหน้าจอและ WebSocket แล้ว');
+    setLog('เชื่อมต่อ 60 FPS / 4K สำเร็จ');
   }
 
   function connectWebSocket() {
@@ -394,20 +653,23 @@
     const badge = document.getElementById('wsBadge');
 
     ws.onopen = () => {
-      badge.textContent = '⚡ WS เชื่อมต่อแล้ว';
+      badge.textContent = '⚡ WS สด';
       badge.className = 'pill ok';
       pingTimer = setInterval(() => {
-        if (ws && ws.readyState === 1) {
-          ws.send(JSON.stringify({ type: 'ping', t: Date.now() }));
-        }
-      }, 3000);
+        if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'ping', t: Date.now() }));
+      }, 2500);
     };
 
     ws.onmessage = (ev) => {
       try {
         const data = JSON.parse(ev.data);
-        if (data.type === 'pong' && data.t) {
-          document.getElementById('pingLbl').textContent = (Date.now() - data.t) + ' ms';
+        if (data.type === 'pong') {
+          if (data.t) document.getElementById('pingLbl').textContent = (Date.now() - data.t) + ' ms';
+          updateLockAndControlUI(data.screenOn, data.locked, data.controlAllowed);
+        } else if (data.type === 'clients') {
+          renderClientsList(data);
+        } else if (data.type === 'orientation') {
+          applyOrientation(data.landscape);
         } else if (data.type === 'chat_history' && Array.isArray(data.messages)) {
           chatMessages = data.messages;
           renderChat();
@@ -416,34 +678,32 @@
             chatMessages.push(data.message);
             renderChat();
           }
+        } else if (data.type === 'info' && data.message) {
+          setLog(data.message);
         } else if (data.type === 'error' && data.error) {
-          setLog('⚠️ ' + data.error);
+          setLog(data.error);
         }
       } catch (_) {}
     };
 
     ws.onclose = () => {
-      badge.textContent = 'WS: กำลังเชื่อมใหม่...';
+      badge.textContent = 'WS: เชื่อมใหม่...';
       badge.className = 'pill warn';
-      setTimeout(() => {
-        if (!document.hidden) connectWebSocket();
-      }, 2000);
+      setTimeout(() => { if (!document.hidden) connectWebSocket(); }, 2000);
     };
   }
 
   function renderChat() {
-    if (!chatMessages.length) {
-      chatBox.innerHTML = '<div class="hint">ยังไม่มีข้อความ — พิมพ์คุยกับฝั่งมือถือได้แบบเรียลไทม์</div>';
-      return;
-    }
+    if (!chatMessages.length) { chatBox.innerHTML = '<div class="hint">ยังไม่มีข้อความ</div>'; return; }
     chatBox.innerHTML = '';
     for (const m of chatMessages) {
       const div = document.createElement('div');
-      div.className = 'chat-msg ' + (m.sender === 'PC' ? 'pc' : 'phone');
+      const isPhone = m.sender === 'Phone';
+      div.className = 'chat-msg ' + (isPhone ? 'phone' : 'pc');
       const time = new Date(m.timeMs || Date.now()).toLocaleTimeString();
       const meta = document.createElement('div');
       meta.className = 'chat-meta';
-      meta.textContent = (m.sender === 'PC' ? '💻 คอม' : '📱 มือถือ') + ' • ' + time;
+      meta.textContent = (isPhone ? '📱 มือถือ' : '💻 ' + m.sender) + ' • ' + time;
       const body = document.createElement('div');
       body.textContent = m.text;
       div.appendChild(meta);
@@ -458,29 +718,19 @@
     const text = inp.value.trim();
     if (!text) return;
     inp.value = '';
-    if (ws && ws.readyState === 1) {
-      ws.send(JSON.stringify({ type: 'chat', text }));
-    } else {
-      fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Pin': currentPin },
-        body: JSON.stringify({ text })
-      });
-    }
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'chat', text }));
+    else fetch('/api/chat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Pin': currentPin },
+      body: JSON.stringify({ text })
+    });
   }
 
   function sendCmd(payload) {
-    if (ws && ws.readyState === 1) {
-      ws.send(JSON.stringify(payload));
-      return;
-    }
+    if (ws && ws.readyState === 1) { ws.send(JSON.stringify(payload)); return; }
     fetch('/api/control', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Pin': currentPin },
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Pin': currentPin },
       body: JSON.stringify(payload)
-    }).then(r => r.json()).then(d => {
-      if (!d.ok && d.error) setLog('⚠️ ' + d.error);
-    }).catch(() => {});
+    }).then(r => r.json()).then(d => { if (!d.ok && d.error) setLog(d.error); }).catch(() => {});
   }
 
   function sendText(append = true) {
@@ -488,20 +738,11 @@
     const txt = inp.value;
     if (!txt) return;
     sendCmd({ type: 'text', text: txt, append });
-    setLog('พิมพ์ไปมือถือ: ' + txt);
     inp.value = '';
   }
 
-  function sendPaste() {
-    const inp = document.getElementById('textInput');
-    const txt = inp.value;
-    if (!txt) return;
-    sendCmd({ type: 'paste', text: txt });
-    setLog('วางข้อความลงมือถือแล้ว');
-    inp.value = '';
-  }
-
-  function setPreset(edge, fps, qual) {
+  function setPreset(edge, fps, qual, activeId) {
+    ['pre4k','pre1080','pre720'].forEach(id => document.getElementById(id).classList.toggle('active', id === activeId));
     document.getElementById('edgeRange').value = edge;
     document.getElementById('edgeVal').textContent = edge;
     document.getElementById('fpsRange').value = fps;
@@ -523,10 +764,7 @@
     const fileInp = document.getElementById('apkFileInput');
     const status = document.getElementById('otaStatus');
     const btn = document.getElementById('btnUploadApk');
-    if (!fileInp.files || !fileInp.files[0]) {
-      status.textContent = '⚠️ กรุณาเลือกไฟล์ .apk ก่อน';
-      return;
-    }
+    if (!fileInp.files || !fileInp.files[0]) { status.textContent = '⚠️ กรุณาเลือกไฟล์ .apk ก่อน'; return; }
     const file = fileInp.files[0];
     btn.disabled = true;
     status.textContent = `⏳ กำลังส่ง ${file.name} (${(file.size/1024/1024).toFixed(2)} MB)...`;
@@ -541,20 +779,16 @@
       status.textContent = (data.ok ? '✅ ' : '❌ ') + (data.message || 'เสร็จสิ้น');
     } catch (e) {
       status.textContent = '❌ ส่งอัปเดตไม่สำเร็จ: ' + e.message;
-    } finally {
-      btn.disabled = false;
-    }
+    } finally { btn.disabled = false; }
   }
 
   function reloadStream() { init(); }
-
   function downloadSnapshot() {
     const a = document.createElement('a');
     a.href = '/api/frame.jpg?pin=' + encodeURIComponent(currentPin) + '&t=' + Date.now();
     a.download = 'phone_screen_' + Date.now() + '.jpg';
     a.click();
   }
-
   function showRipple(clientX, clientY) {
     const rect = frame.getBoundingClientRect();
     const el = document.createElement('div');
@@ -562,14 +796,14 @@
     el.style.left = (clientX - rect.left) + 'px';
     el.style.top = (clientY - rect.top) + 'px';
     frame.appendChild(el);
-    setTimeout(() => el.remove(), 340);
+    setTimeout(() => el.remove(), 320);
   }
-
   function getNormCoords(e) {
     const rect = img.getBoundingClientRect();
-    const x = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-    const y = Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height));
-    return { x, y };
+    return {
+      x: Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)),
+      y: Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height))
+    };
   }
 
   let dragStart = null;
@@ -578,38 +812,28 @@
     const p = getNormCoords(e);
     showRipple(e.clientX, e.clientY);
     sendCmd({ type: 'longpress', x: p.x, y: p.y, duration: 650 });
-    setLog(`Long Press (${(p.x*100).toFixed(0)}%, ${(p.y*100).toFixed(0)}%)`);
+    focusKeyCatcher();
   });
-
   img.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     img.setPointerCapture(e.pointerId);
     const p = getNormCoords(e);
     dragStart = { x: p.x, y: p.y, cx: e.clientX, cy: e.clientY, t: Date.now() };
   });
-
   img.addEventListener('pointerup', (e) => {
     if (!dragStart) return;
     const p = getNormCoords(e);
     const dx = Math.abs(e.clientX - dragStart.cx);
     const dy = Math.abs(e.clientY - dragStart.cy);
     const dt = Date.now() - dragStart.t;
-
     showRipple(e.clientX, e.clientY);
     if (dx > 10 || dy > 10) {
-      sendCmd({
-        type: 'swipe',
-        x1: dragStart.x, y1: dragStart.y,
-        x2: p.x, y2: p.y,
-        duration: Math.min(800, Math.max(80, dt))
-      });
-      setLog('ปัดหน้าจอ (Swipe)');
+      sendCmd({ type: 'swipe', x1: dragStart.x, y1: dragStart.y, x2: p.x, y2: p.y, duration: Math.min(800, Math.max(80, dt)) });
     } else if (dt >= 450) {
       sendCmd({ type: 'longpress', x: p.x, y: p.y, duration: Math.min(2000, dt) });
-      setLog(`กดค้าง (${dt}ms)`);
     } else {
       sendCmd({ type: 'tap', x: p.x, y: p.y });
-      setLog(`แตะ (${(p.x*100).toFixed(0)}%, ${(p.y*100).toFixed(0)}%)`);
+      setTimeout(focusKeyCatcher, 40);
     }
     dragStart = null;
   });
@@ -619,11 +843,10 @@
     e.preventDefault();
     if (wheelLock) return;
     wheelLock = true;
-    setTimeout(() => { wheelLock = false; }, 140);
+    setTimeout(() => { wheelLock = false; }, 130);
     const p = getNormCoords(e);
     const delta = e.deltaY > 0 ? -0.24 : 0.24;
-    const y2 = Math.min(0.95, Math.max(0.05, p.y + delta));
-    sendCmd({ type: 'swipe', x1: p.x, y1: p.y, x2: p.x, y2, duration: 150 });
+    sendCmd({ type: 'swipe', x1: p.x, y1: p.y, x2: p.x, y2: Math.min(0.95, Math.max(0.05, p.y + delta)), duration: 140 });
   }, { passive: false });
 
   init();

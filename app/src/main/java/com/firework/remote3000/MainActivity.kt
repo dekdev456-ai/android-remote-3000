@@ -12,6 +12,9 @@ import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.speech.RecognizerIntent
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
@@ -40,6 +43,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvLanUrl: TextView
     private lateinit var tvPinCode: TextView
     private lateinit var tvClients: TextView
+    private lateinit var tvClientsList: TextView
+    private lateinit var tvSecurityAlerts: TextView
     private lateinit var tvAccStatus: TextView
     private lateinit var tvError: TextView
     private lateinit var tvChatLog: TextView
@@ -48,18 +53,45 @@ class MainActivity : AppCompatActivity() {
     private lateinit var etUpdateUrl: EditText
     private lateinit var btnDownloadUpdate: Button
     private lateinit var switchPin: SwitchMaterial
+    private lateinit var switchAllowControl: SwitchMaterial
+    private lateinit var switchKeepAwake: SwitchMaterial
     private lateinit var btnToggleServer: Button
     private lateinit var btnCopyLan: Button
     private lateinit var btnRefreshIp: Button
     private lateinit var btnNewPin: Button
     private lateinit var btnOpenAccessibility: Button
 
+    // Companion Buddy UI
+    private lateinit var buddyView: BuddyView
+    private lateinit var tvBuddySpeech: TextView
+    private lateinit var etBuddyInput: EditText
+    private lateinit var btnBuddySend: Button
+    private lateinit var btnBuddyMic: Button
+    private lateinit var btnBuddyTopic: Button
+    private lateinit var btnBuddyGame: Button
+    private lateinit var switchBuddyVoice: SwitchMaterial
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
+
     private val timeFmt = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
 
-    private val notifPermLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
+    private val runtimePermLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
     ) {
         requestScreenCapture()
+    }
+
+    private val speechLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        buddyView.setMood(BuddyView.Mood.IDLE)
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            val matches = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            val spoken = matches?.firstOrNull()?.trim().orEmpty()
+            if (spoken.isNotEmpty()) {
+                handleBuddyUserMessage(spoken)
+            }
+        }
     }
 
     private val projectionLauncher = registerForActivityResult(
@@ -87,6 +119,8 @@ class MainActivity : AppCompatActivity() {
         tvLanUrl = findViewById(R.id.tvLanUrl)
         tvPinCode = findViewById(R.id.tvPinCode)
         tvClients = findViewById(R.id.tvClients)
+        tvClientsList = findViewById(R.id.tvClientsList)
+        tvSecurityAlerts = findViewById(R.id.tvSecurityAlerts)
         tvAccStatus = findViewById(R.id.tvAccStatus)
         tvError = findViewById(R.id.tvError)
         tvChatLog = findViewById(R.id.tvChatLog)
@@ -95,14 +129,31 @@ class MainActivity : AppCompatActivity() {
         etUpdateUrl = findViewById(R.id.etUpdateUrl)
         btnDownloadUpdate = findViewById(R.id.btnDownloadUpdate)
         switchPin = findViewById(R.id.switchPin)
+        switchAllowControl = findViewById(R.id.switchAllowControl)
+        switchKeepAwake = findViewById(R.id.switchKeepAwake)
         btnToggleServer = findViewById(R.id.btnToggleServer)
         btnCopyLan = findViewById(R.id.btnCopyLan)
         btnRefreshIp = findViewById(R.id.btnRefreshIp)
         btnNewPin = findViewById(R.id.btnNewPin)
         btnOpenAccessibility = findViewById(R.id.btnOpenAccessibility)
 
+        // Buddy views
+        buddyView = findViewById(R.id.buddyView)
+        tvBuddySpeech = findViewById(R.id.tvBuddySpeech)
+        etBuddyInput = findViewById(R.id.etBuddyInput)
+        btnBuddySend = findViewById(R.id.btnBuddySend)
+        btnBuddyMic = findViewById(R.id.btnBuddyMic)
+        btnBuddyTopic = findViewById(R.id.btnBuddyTopic)
+        btnBuddyGame = findViewById(R.id.btnBuddyGame)
+        switchBuddyVoice = findViewById(R.id.switchBuddyVoice)
+
+        initBuddyTts()
+        setupBuddyInteractions()
+
         ServiceState.lanIp.value = NetworkUtils.getLocalIpv4Address()
         switchPin.isChecked = ServiceState.pinRequired.value
+        switchAllowControl.isChecked = ServiceState.controlAllowed.value
+        switchKeepAwake.isChecked = ServiceState.keepScreenAwake.value
 
         btnToggleServer.setOnClickListener {
             if (ServiceState.isRunning.value) {
@@ -132,6 +183,22 @@ class MainActivity : AppCompatActivity() {
             ServiceState.pinRequired.value = checked
         }
 
+        switchAllowControl.setOnCheckedChangeListener { _, checked ->
+            ServiceState.controlAllowed.value = checked
+            ServiceState.onClientsChangedBroadcast?.invoke()
+            val msg = if (checked) {
+                "✅ เปิดให้คอมพิวเตอร์ควบคุมหน้าจอได้"
+            } else {
+                "🛡️ ปิดการควบคุมจอแล้ว — หากมีคนพยายามแตะ/คุม จะแจ้งเตือนทันที!"
+            }
+            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+        }
+
+        switchKeepAwake.setOnCheckedChangeListener { _, checked ->
+            ServiceState.keepScreenAwake.value = checked
+            ServiceState.onKeepAwakeChanged?.invoke(checked)
+        }
+
         btnOpenAccessibility.setOnClickListener {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
@@ -156,18 +223,119 @@ class MainActivity : AppCompatActivity() {
         observeState()
     }
 
+    private fun initBuddyTts() {
+        tts = TextToSpeech(this) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                val th = Locale("th", "TH")
+                val res = tts?.setLanguage(th)
+                ttsReady = res != TextToSpeech.LANG_MISSING_DATA && res != TextToSpeech.LANG_NOT_SUPPORTED
+                if (!ttsReady) {
+                    tts?.language = Locale.getDefault()
+                    ttsReady = true
+                }
+                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) {
+                        runOnUiThread { buddyView.setMood(BuddyView.Mood.SPEAKING) }
+                    }
+                    override fun onDone(utteranceId: String?) {
+                        runOnUiThread { buddyView.setMood(BuddyView.Mood.IDLE) }
+                    }
+                    @Deprecated("Deprecated in Java")
+                    override fun onError(utteranceId: String?) {
+                        runOnUiThread { buddyView.setMood(BuddyView.Mood.IDLE) }
+                    }
+                })
+            }
+        }
+    }
+
+    private fun setupBuddyInteractions() {
+        buddyView.onBuddyTap = {
+            buddySay(BuddyBrain.onTap(), BuddyView.Mood.EXCITED)
+        }
+        btnBuddyTopic.setOnClickListener {
+            buddySay(BuddyBrain.nextFunTopic(), BuddyView.Mood.HAPPY)
+        }
+        btnBuddyGame.setOnClickListener {
+            buddySay(BuddyBrain.playRps(null), BuddyView.Mood.EXCITED)
+        }
+        btnBuddySend.setOnClickListener {
+            val txt = etBuddyInput.text.toString().trim()
+            if (txt.isNotEmpty()) {
+                etBuddyInput.setText("")
+                handleBuddyUserMessage(txt)
+            }
+        }
+        btnBuddyMic.setOnClickListener {
+            startVoiceRecognition()
+        }
+    }
+
+    private fun handleBuddyUserMessage(userText: String) {
+        val reply = BuddyBrain.reply(userText)
+        tvBuddySpeech.text = "🧑 คุณ: $userText\n\n✨ น้องพลุ: $reply"
+        buddyView.setMood(BuddyView.Mood.HAPPY)
+        speakBuddy(reply)
+    }
+
+    private fun buddySay(message: String, mood: BuddyView.Mood) {
+        tvBuddySpeech.text = "✨ น้องพลุ: $message"
+        buddyView.setMood(mood)
+        speakBuddy(message)
+    }
+
+    private fun speakBuddy(text: String) {
+        if (!switchBuddyVoice.isChecked || !ttsReady) return
+        val clean = text.replace(Regex("[\\p{So}\\p{Cn}]"), "").trim()
+        if (clean.isNotEmpty()) {
+            tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, null, "buddy_${System.currentTimeMillis()}")
+        }
+    }
+
+    private fun startVoiceRecognition() {
+        try {
+            buddyView.setMood(BuddyView.Mood.LISTENING)
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "th-TH")
+                putExtra(RecognizerIntent.EXTRA_PROMPT, "พูดคุยกับน้องพลุได้เลย! ✨")
+            }
+            speechLauncher.launch(intent)
+        } catch (_: Exception) {
+            buddyView.setMood(BuddyView.Mood.IDLE)
+            Toast.makeText(this, "เครื่องนี้ยังไม่รองรับระบบแปลงเสียงพูด (พิมพ์คุยแทนได้เลย!)", Toast.LENGTH_LONG).show()
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         ServiceState.lanIp.value = NetworkUtils.getLocalIpv4Address()
         ServiceState.accessibilityEnabled.value = RemoteAccessibilityService.instance != null
     }
 
+    override fun onDestroy() {
+        tts?.stop()
+        tts?.shutdown()
+        tts = null
+        super.onDestroy()
+    }
+
     private fun startServerFlow() {
+        val needed = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
             != PackageManager.PERMISSION_GRANTED
         ) {
-            notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            needed.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            needed.add(Manifest.permission.RECORD_AUDIO)
+        }
+        if (needed.isNotEmpty()) {
+            runtimePermLauncher.launch(needed.toTypedArray())
         } else {
             requestScreenCapture()
         }
@@ -241,10 +409,10 @@ class MainActivity : AppCompatActivity() {
                 tvLocalUrl.text = "http://localhost:${snap.port}"
                 tvLanUrl.text = "http://${snap.ip}:${snap.port}"
                 tvPinCode.text = snap.pin
-                tvClients.text = "คอมที่กำลังเชื่อมต่อ: ${snap.clients} เครื่อง"
+                tvClients.text = "อุปกรณ์ที่กำลังเปิดดู/คุมพร้อมกัน: ${snap.clients} เครื่อง (รองรับ PC + Mac พร้อมกัน)"
 
                 if (snap.running) {
-                    tvStatusBadge.text = "● กำลังทำงาน (Port ${snap.port}) • v${ServiceState.VERSION_NAME}"
+                    tvStatusBadge.text = "● กำลังทำงาน (Port ${snap.port} • 60 FPS / 4K) • v${ServiceState.VERSION_NAME}"
                     tvStatusBadge.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.accent_green))
                     btnToggleServer.text = "⏹ หยุดเซิร์ฟเวอร์"
                     btnToggleServer.backgroundTintList = ColorStateList.valueOf(
@@ -262,12 +430,38 @@ class MainActivity : AppCompatActivity() {
         }
 
         lifecycleScope.launch {
+            ServiceState.connectedDevices.collect { devices ->
+                if (devices.isEmpty()) {
+                    tvClientsList.text = "ยังไม่มีเครื่องอื่นเชื่อมต่อเข้ามา"
+                } else {
+                    tvClientsList.text = devices.joinToString("\n") { d ->
+                        val t = timeFmt.format(Date(d.connectedAtMs))
+                        "🟢 ${d.deviceName} • IP: ${d.ip} (เข้าเมื่อ $t)"
+                    }
+                }
+            }
+        }
+
+        lifecycleScope.launch {
+            ServiceState.securityAlerts.collect { alerts ->
+                if (alerts.isEmpty()) {
+                    tvSecurityAlerts.text = "ปกติ — ยังไม่มีการพยายามคุมจอขณะปิดสิทธิ์"
+                } else {
+                    tvSecurityAlerts.text = alerts.takeLast(8).reversed().joinToString("\n") { a ->
+                        val t = timeFmt.format(Date(a.timeMs))
+                        "🚨 [$t] ${a.message}"
+                    }
+                }
+            }
+        }
+
+        lifecycleScope.launch {
             ServiceState.accessibilityEnabled.collect { enabled ->
                 if (enabled) {
-                    tvAccStatus.text = "✅ เปิดสิทธิ์ควบคุมจากคอมแล้ว (แตะ / ปัด / ปุ่มนำทางได้)"
+                    tvAccStatus.text = "✅ เปิดสิทธิ์ควบคุมจากคอมแล้ว (แตะ / ปัด / พิมพ์สดได้)"
                     tvAccStatus.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.accent_green))
                 } else {
-                    tvAccStatus.text = "⚠️ ยังไม่ได้เปิดสิทธิ์ Accessibility (ดูจอได้อย่างเดียว — กดเปิดด้านล่างเพื่อควบคุมได้)"
+                    tvAccStatus.text = "⚠️ ยังไม่ได้เปิดสิทธิ์ Accessibility (ดูจอได้อย่างเดียว — กดเปิดด้านล่าง)"
                     tvAccStatus.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.accent_blue))
                 }
             }
@@ -280,7 +474,7 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     tvChatLog.text = msgs.takeLast(12).joinToString("\n") { m ->
                         val t = timeFmt.format(Date(m.timeMs))
-                        val tag = if (m.sender == "PC") "💻 คอม" else "📱 มือถือ"
+                        val tag = if (m.sender == "Phone") "📱 มือถือ" else "💻 ${m.sender}"
                         "[$t] $tag: ${m.text}"
                     }
                 }

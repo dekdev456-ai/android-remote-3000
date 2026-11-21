@@ -16,11 +16,14 @@ import java.net.Socket
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 
 class LocalHttpServer(
     private val context: Context,
@@ -36,14 +39,27 @@ class LocalHttpServer(
         fun getTargetFps(): Int
         fun getJpegQuality(): Int
         fun getMaxEdgePx(): Int
+        fun getScreenLockStatus(): Pair<Boolean, Boolean> // (screenOn, isLocked)
         fun updateStreamSettings(fps: Int?, quality: Int?, maxEdge: Int?)
         fun wakeScreen(): Boolean
         fun adjustVolume(direction: String): Boolean
-        fun onIncomingPcChat(text: String)
+        fun getAudioOutputMode(): String
+        fun isAudioCaptureSupported(): Boolean
+        fun setAudioOutputMode(mode: String): Pair<Boolean, String>
+        fun subscribeAudio(): LinkedBlockingQueue<ByteArray>
+        fun unsubscribeAudio(queue: LinkedBlockingQueue<ByteArray>)
+        fun onUnauthorizedControlAttempt(clientIp: String, deviceName: String)
+        fun onIncomingPcChat(text: String, senderLabel: String)
         fun installApkBytes(apkBytes: ByteArray): Pair<Boolean, String>
     }
 
-    private class WsClient(val socket: Socket, val output: OutputStream) {
+    private class WsClient(
+        val id: String,
+        val ip: String,
+        val deviceName: String,
+        val socket: Socket,
+        val output: OutputStream
+    ) {
         private val writeLock = Object()
         fun sendText(text: String): Boolean {
             val payload = text.toByteArray(StandardCharsets.UTF_8)
@@ -81,8 +97,8 @@ class LocalHttpServer(
     }
 
     private val running = AtomicBoolean(false)
-    private val activeStreams = AtomicInteger(0)
     private val wsClients = CopyOnWriteArrayList<WsClient>()
+    private val streamSockets = ConcurrentHashMap<String, Pair<ServiceState.ConnectedDevice, Socket>>()
     private var serverSocket: ServerSocket? = null
     private var acceptThread: Thread? = null
     private val clientPool: ExecutorService = Executors.newCachedThreadPool()
@@ -127,19 +143,75 @@ class LocalHttpServer(
             }
         }
         wsClients.clear()
+        for (entry in streamSockets.values) {
+            try {
+                entry.second.close()
+            } catch (_: Exception) {
+            }
+        }
+        streamSockets.clear()
         clientPool.shutdownNow()
-        activeStreams.set(0)
-        ServiceState.connectedClients.value = 0
+        syncConnectedDevices()
+    }
+
+    private fun syncConnectedDevices() {
+        val uniqueById = LinkedHashMap<String, ServiceState.ConnectedDevice>()
+        for (entry in streamSockets.values) {
+            uniqueById[entry.first.id] = entry.first
+        }
+        val list = uniqueById.values.toList()
+        ServiceState.connectedDevices.value = list
+        ServiceState.connectedClients.value = list.size
+        broadcastClients()
+    }
+
+    private fun buildClientsPayload(): JSONObject {
+        val arr = JSONArray()
+        for (d in ServiceState.connectedDevices.value) {
+            arr.put(
+                JSONObject()
+                    .put("id", d.id)
+                    .put("ip", d.ip)
+                    .put("deviceName", d.deviceName)
+                    .put("connectedAtMs", d.connectedAtMs)
+            )
+        }
+        val (screenOn, locked) = delegate.getScreenLockStatus()
+        return JSONObject()
+            .put("type", "clients")
+            .put("phoneIp", ServiceState.lanIp.value)
+            .put("phoneName", "${Build.MANUFACTURER} ${Build.MODEL}")
+            .put("controlAllowed", ServiceState.controlAllowed.value)
+            .put("screenOn", screenOn)
+            .put("locked", locked)
+            .put("clients", arr)
+    }
+
+    fun broadcastClients() {
+        broadcastJson(buildClientsPayload())
+    }
+
+    fun broadcastOrientation(w: Int, h: Int) {
+        val payload = JSONObject()
+            .put("type", "orientation")
+            .put("width", w)
+            .put("height", h)
+            .put("landscape", w > h)
+        broadcastJson(payload)
     }
 
     fun broadcastChat(msg: ServiceState.ChatMessage) {
         val payload = JSONObject()
             .put("type", "chat")
             .put("message", chatToJson(msg))
-            .toString()
+        broadcastJson(payload)
+    }
+
+    private fun broadcastJson(json: JSONObject) {
+        val text = json.toString()
         val dead = mutableListOf<WsClient>()
         for (c in wsClients) {
-            if (!c.sendText(payload)) dead.add(c)
+            if (!c.sendText(text)) dead.add(c)
         }
         if (dead.isNotEmpty()) wsClients.removeAll(dead.toSet())
     }
@@ -151,12 +223,40 @@ class LocalHttpServer(
             .put("text", msg.text)
             .put("timeMs", msg.timeMs)
 
+    private fun parseDeviceName(ua: String?): String {
+        if (ua.isNullOrBlank()) return "Unknown Device"
+        val u = ua.lowercase()
+        val os = when {
+            u.contains("windows") -> "Windows PC"
+            u.contains("macintosh") || u.contains("mac os x") -> "Mac"
+            u.contains("iphone") -> "iPhone"
+            u.contains("ipad") -> "iPad"
+            u.contains("android") -> "Android"
+            u.contains("linux") -> "Linux PC"
+            else -> "Browser"
+        }
+        val browser = when {
+            u.contains("edg/") -> "Edge"
+            u.contains("opr/") || u.contains("opera") -> "Opera"
+            u.contains("chrome/") && !u.contains("edg/") -> "Chrome"
+            u.contains("firefox/") -> "Firefox"
+            u.contains("safari/") && !u.contains("chrome/") -> "Safari"
+            else -> ""
+        }
+        return if (browser.isNotEmpty()) "$os ($browser)" else os
+    }
+
     private fun handleClient(socket: Socket) {
+        val clientIp = socket.inetAddress?.hostAddress ?: "unknown"
         try {
             socket.tcpNoDelay = true
+            try {
+                socket.sendBufferSize = 512 * 1024
+            } catch (_: Exception) {
+            }
             socket.soTimeout = 20_000
             val input = BufferedInputStream(socket.getInputStream(), 32 * 1024)
-            val output = BufferedOutputStream(socket.getOutputStream(), 64 * 1024)
+            val output = BufferedOutputStream(socket.getOutputStream(), 128 * 1024)
 
             val requestLine = readLineCrLf(input) ?: return
             val parts = requestLine.split(" ")
@@ -183,9 +283,9 @@ class LocalHttpServer(
                 return
             }
 
+            val deviceName = parseDeviceName(headers["user-agent"])
             val pinParam = headers["x-pin"] ?: query["pin"] ?: ""
 
-            // WebSocket upgrade for zero-latency controls + live chat
             if (method == "GET" && path == "/ws" &&
                 headers["upgrade"]?.equals("websocket", ignoreCase = true) == true
             ) {
@@ -194,7 +294,7 @@ class LocalHttpServer(
                     return
                 }
                 val wsKey = headers["sec-websocket-key"] ?: return
-                handleWebSocket(socket, input, output, wsKey)
+                handleWebSocket(socket, input, output, wsKey, clientIp, deviceName)
                 return
             }
 
@@ -209,20 +309,38 @@ class LocalHttpServer(
 
                 method == "GET" && path == "/api/info" -> {
                     val (w, h) = delegate.getCaptureDimensions()
+                    val (screenOn, locked) = delegate.getScreenLockStatus()
                     val json = JSONObject().apply {
                         put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
+                        put("phoneIp", ServiceState.lanIp.value)
+                        put("yourIp", clientIp)
+                        put("yourDevice", deviceName)
                         put("version", ServiceState.VERSION_NAME)
                         put("width", w)
                         put("height", h)
+                        put("landscape", w > h)
+                        put("screenOn", screenOn)
+                        put("locked", locked)
                         put("streaming", ServiceState.isStreaming.value)
                         put("accessibility", RemoteAccessibilityService.instance != null)
+                        put("controlAllowed", ServiceState.controlAllowed.value)
                         put("pinRequired", ServiceState.pinRequired.value)
                         put("fps", delegate.getTargetFps())
                         put("quality", delegate.getJpegQuality())
                         put("maxEdge", delegate.getMaxEdgePx())
-                        put("clients", activeStreams.get())
+                        put("audioOutput", delegate.getAudioOutputMode())
+                        put("audioSupported", delegate.isAudioCaptureSupported())
+                        put("clients", ServiceState.connectedClients.value)
                     }
                     sendJson(output, 200, json)
+                }
+
+                method == "GET" && path == "/api/clients" -> {
+                    if (!isPinValid(pinParam)) {
+                        sendJson(output, 401, JSONObject().put("ok", false).put("error", "Invalid PIN"))
+                        return
+                    }
+                    sendJson(output, 200, buildClientsPayload())
                 }
 
                 method == "GET" && path == "/api/verify" -> {
@@ -251,14 +369,19 @@ class LocalHttpServer(
                         sendJson(output, 400, JSONObject().put("ok", false).put("error", "Empty message"))
                         return
                     }
-                    val msg = ServiceState.addChatMessage("PC", txt)
-                    delegate.onIncomingPcChat(txt)
+                    val msg = ServiceState.addChatMessage("$deviceName ($clientIp)", txt)
+                    delegate.onIncomingPcChat(txt, "$deviceName • $clientIp")
                     sendJson(output, 200, JSONObject().put("ok", true).put("message", chatToJson(msg)))
                 }
 
                 method == "POST" && path == "/api/update-apk" -> {
                     if (!isPinValid(pinParam)) {
                         sendJson(output, 401, JSONObject().put("ok", false).put("error", "Invalid PIN"))
+                        return
+                    }
+                    if (!ServiceState.controlAllowed.value) {
+                        delegate.onUnauthorizedControlAttempt(clientIp, deviceName)
+                        sendJson(output, 403, JSONObject().put("ok", false).put("message", "เจ้าของมือถือปิดการควบคุมอยู่"))
                         return
                     }
                     val (ok, message) = delegate.installApkBytes(bodyBytes)
@@ -284,7 +407,16 @@ class LocalHttpServer(
                         return
                     }
                     socket.soTimeout = 0
-                    streamMjpeg(output)
+                    streamMjpeg(socket, output, clientIp, deviceName)
+                }
+
+                method == "GET" && path == "/stream.pcm" -> {
+                    if (!isPinValid(pinParam)) {
+                        sendJson(output, 401, JSONObject().put("ok", false).put("error", "Invalid PIN"))
+                        return
+                    }
+                    socket.soTimeout = 0
+                    streamPcmAudio(output)
                 }
 
                 method == "POST" && path == "/api/control" -> {
@@ -300,8 +432,8 @@ class LocalHttpServer(
                         sendJson(output, 401, JSONObject().put("ok", false).put("error", "Invalid PIN"))
                         return
                     }
-                    val result = handleControlCommand(json)
-                    sendJson(output, if (result.optBoolean("ok")) 200 else 400, result)
+                    val result = handleControlCommand(json, clientIp, deviceName)
+                    sendJson(output, if (result.optBoolean("ok")) 200 else 403, result)
                 }
 
                 else -> {
@@ -309,7 +441,6 @@ class LocalHttpServer(
                 }
             }
         } catch (_: Exception) {
-            // Client disconnected
         } finally {
             try {
                 socket.close()
@@ -322,7 +453,9 @@ class LocalHttpServer(
         socket: Socket,
         input: BufferedInputStream,
         output: BufferedOutputStream,
-        wsKey: String
+        wsKey: String,
+        clientIp: String,
+        deviceName: String
     ) {
         val acceptRaw = MessageDigest.getInstance("SHA-1")
             .digest((wsKey.trim() + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").toByteArray(StandardCharsets.US_ASCII))
@@ -338,14 +471,19 @@ class LocalHttpServer(
         output.flush()
         socket.soTimeout = 0
 
-        val client = WsClient(socket, output)
+        val id = UUID.randomUUID().toString().substring(0, 8)
+        val client = WsClient(id, clientIp, deviceName, socket, output)
         wsClients.add(client)
 
         try {
-            // Send initial chat history
             val arr = JSONArray()
             for (m in ServiceState.chatMessages.value) arr.put(chatToJson(m))
             client.sendText(JSONObject().put("type", "chat_history").put("messages", arr).toString())
+            client.sendText(buildClientsPayload().toString())
+            val (w, h) = delegate.getCaptureDimensions()
+            client.sendText(
+                JSONObject().put("type", "orientation").put("width", w).put("height", h).put("landscape", w > h).toString()
+            )
 
             while (running.get() && !socket.isClosed) {
                 val b0 = input.read()
@@ -357,10 +495,10 @@ class LocalHttpServer(
                 val masked = (b1 and 0x80) != 0
                 var len = (b1 and 0x7F).toLong()
                 if (len == 126L) {
-                    val h = input.read()
-                    val l = input.read()
-                    if (h == -1 || l == -1) break
-                    len = ((h shl 8) or l).toLong()
+                    val hByte = input.read()
+                    val lByte = input.read()
+                    if (hByte == -1 || lByte == -1) break
+                    len = ((hByte shl 8) or lByte).toLong()
                 } else if (len == 127L) {
                     var l64 = 0L
                     for (i in 0 until 8) {
@@ -381,9 +519,9 @@ class LocalHttpServer(
                 }
 
                 when (opcode) {
-                    0x8 -> break // Close
-                    0x9 -> client.sendPong(payload) // Ping -> Pong
-                    0x1 -> { // Text JSON command
+                    0x8 -> break
+                    0x9 -> client.sendPong(payload)
+                    0x1 -> {
                         val txt = String(payload, StandardCharsets.UTF_8)
                         try {
                             val cmd = JSONObject(txt)
@@ -391,15 +529,32 @@ class LocalHttpServer(
                             if (type == "chat") {
                                 val msgTxt = cmd.optString("text", "").trim()
                                 if (msgTxt.isNotEmpty()) {
-                                    ServiceState.addChatMessage("PC", msgTxt)
-                                    delegate.onIncomingPcChat(msgTxt)
+                                    ServiceState.addChatMessage("$deviceName ($clientIp)", msgTxt)
+                                    delegate.onIncomingPcChat(msgTxt, "$deviceName • $clientIp")
                                 }
                             } else if (type == "ping") {
-                                client.sendText(JSONObject().put("type", "pong").put("t", cmd.optLong("t", 0L)).toString())
+                                val (screenOn, locked) = delegate.getScreenLockStatus()
+                                client.sendText(
+                                    JSONObject()
+                                        .put("type", "pong")
+                                        .put("t", cmd.optLong("t", 0L))
+                                        .put("screenOn", screenOn)
+                                        .put("locked", locked)
+                                        .put("controlAllowed", ServiceState.controlAllowed.value)
+                                        .toString()
+                                )
                             } else {
-                                val res = handleControlCommand(cmd)
-                                if (!res.optBoolean("ok")) {
-                                    client.sendText(JSONObject().put("type", "error").put("error", res.optString("error", "Failed")).toString())
+                                val res = handleControlCommand(cmd, clientIp, deviceName)
+                                if (res.has("message")) {
+                                    client.sendText(
+                                        JSONObject().put("type", "info").put("ok", res.optBoolean("ok"))
+                                            .put("message", res.optString("message")).toString()
+                                    )
+                                } else if (!res.optBoolean("ok")) {
+                                    client.sendText(
+                                        JSONObject().put("type", "error")
+                                            .put("error", res.optString("error", "Failed")).toString()
+                                    )
                                 }
                             }
                         } catch (_: Exception) {
@@ -418,28 +573,45 @@ class LocalHttpServer(
         return provided.trim() == ServiceState.pin.value
     }
 
-    private fun handleControlCommand(json: JSONObject): JSONObject {
+    private fun handleControlCommand(json: JSONObject, clientIp: String, deviceName: String): JSONObject {
         val type = json.optString("type", "").lowercase()
+
+        // Settings and audio output switching are viewing preferences
         when (type) {
             "settings" -> {
-                val fps = if (json.has("fps")) json.optInt("fps", 24) else null
-                val quality = if (json.has("quality")) json.optInt("quality", 55) else null
-                val maxEdge = if (json.has("maxEdge")) json.optInt("maxEdge", 720) else null
+                val fps = if (json.has("fps")) json.optInt("fps", 60) else null
+                val quality = if (json.has("quality")) json.optInt("quality", 78) else null
+                val maxEdge = if (json.has("maxEdge")) json.optInt("maxEdge", 2160) else null
                 delegate.updateStreamSettings(fps, quality, maxEdge)
                 return JSONObject().put("ok", true)
             }
-            "wake" -> {
-                return JSONObject().put("ok", delegate.wakeScreen())
-            }
-            "volume" -> {
-                return JSONObject().put("ok", delegate.adjustVolume(json.optString("direction", "up")))
+            "audio_output" -> {
+                val mode = json.optString("mode", "phone")
+                val (ok, msg) = delegate.setAudioOutputMode(mode)
+                return JSONObject().put("ok", ok).put("mode", delegate.getAudioOutputMode()).put("message", msg)
             }
         }
 
+        // Security gate: if phone owner disabled remote control, ALERT phone immediately!
+        if (!ServiceState.controlAllowed.value) {
+            delegate.onUnauthorizedControlAttempt(clientIp, deviceName)
+            return JSONObject()
+                .put("ok", false)
+                .put("error", "🚨 เจ้าของมือถือปิดการควบคุมหน้าจออยู่ (แจ้งเตือนไปยังมือถือแล้ว)")
+        }
+
+        when (type) {
+            "wake" -> return JSONObject().put("ok", delegate.wakeScreen())
+            "volume" -> return JSONObject().put("ok", delegate.adjustVolume(json.optString("direction", "up")))
+        }
+
         val acc = RemoteAccessibilityService.instance
-            ?: return JSONObject()
+        if (acc == null) {
+            delegate.onUnauthorizedControlAttempt(clientIp, deviceName)
+            return JSONObject()
                 .put("ok", false)
                 .put("error", "กรุณาเปิดสิทธิ์ Accessibility Service บนมือถือเพื่อควบคุม")
+        }
 
         val ok = when (type) {
             "tap" -> acc.tap(
@@ -465,14 +637,47 @@ class LocalHttpServer(
             )
             "paste" -> acc.pasteText(json.optString("text", ""))
             "backspace" -> acc.sendBackspace()
+            "enter" -> acc.sendEnter()
             else -> false
         }
         return JSONObject().put("ok", ok)
     }
 
-    private fun streamMjpeg(output: OutputStream) {
-        val count = activeStreams.incrementAndGet()
-        ServiceState.connectedClients.value = count
+    private fun streamPcmAudio(output: OutputStream) {
+        val queue = delegate.subscribeAudio()
+        try {
+            val header = (
+                "HTTP/1.1 200 OK\r\n" +
+                    "Content-Type: application/octet-stream\r\n" +
+                    "Cache-Control: no-store, no-cache\r\n" +
+                    "Access-Control-Allow-Origin: *\r\n" +
+                    "Connection: close\r\n\r\n"
+                ).toByteArray(StandardCharsets.US_ASCII)
+            output.write(header)
+            output.flush()
+
+            val silence = ByteArray(1024)
+            while (running.get()) {
+                val chunk = queue.poll(500L, TimeUnit.MILLISECONDS)
+                if (chunk != null) {
+                    output.write(chunk)
+                    output.flush()
+                } else {
+                    output.write(silence)
+                    output.flush()
+                }
+            }
+        } catch (_: Exception) {
+        } finally {
+            delegate.unsubscribeAudio(queue)
+        }
+    }
+
+    private fun streamMjpeg(socket: Socket, output: OutputStream, clientIp: String, deviceName: String) {
+        val id = UUID.randomUUID().toString().substring(0, 8)
+        val dev = ServiceState.ConnectedDevice(id, clientIp, deviceName, System.currentTimeMillis())
+        streamSockets[id] = Pair(dev, socket)
+        syncConnectedDevices()
         try {
             val header = (
                 "HTTP/1.1 200 OK\r\n" +
@@ -486,8 +691,8 @@ class LocalHttpServer(
             output.flush()
 
             var lastSeq = -1L
-            while (running.get()) {
-                val packet = delegate.waitForNextFrame(lastSeq, 800L)
+            while (running.get() && !socket.isClosed) {
+                val packet = delegate.waitForNextFrame(lastSeq, 700L)
                 if (packet == null) {
                     val latest = delegate.getLatestFrame() ?: continue
                     writeMjpegPart(output, latest.jpegBytes)
@@ -498,10 +703,9 @@ class LocalHttpServer(
                 lastSeq = packet.seq
             }
         } catch (_: Exception) {
-            // Stream closed by client
         } finally {
-            val remaining = activeStreams.decrementAndGet().coerceAtLeast(0)
-            ServiceState.connectedClients.value = remaining
+            streamSockets.remove(id)
+            syncConnectedDevices()
         }
     }
 
@@ -522,6 +726,7 @@ class LocalHttpServer(
             200 -> "OK"
             400 -> "Bad Request"
             401 -> "Unauthorized"
+            403 -> "Forbidden"
             404 -> "Not Found"
             503 -> "Service Unavailable"
             else -> "Error"

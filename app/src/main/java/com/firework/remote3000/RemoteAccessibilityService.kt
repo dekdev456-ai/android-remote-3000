@@ -137,38 +137,57 @@ class RemoteAccessibilityService : AccessibilityService() {
         return true
     }
 
-    fun inputText(text: String, append: Boolean = true): Boolean {
-        val focused = findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return false
-        val newText = if (append && focused.text != null) {
-            focused.text.toString() + text
-        } else {
-            text
-        }
+    private fun getRealText(node: AccessibilityNodeInfo): String {
+        val isHint = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && node.isShowingHintText
+        return if (isHint) "" else (node.text?.toString() ?: "")
+    }
+
+    private fun setTextAndMoveCursorToEnd(node: AccessibilityNodeInfo, newText: String): Boolean {
         val args = Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, newText)
         }
-        return focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        val ok = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        if (ok) {
+            val selArgs = Bundle().apply {
+                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, newText.length)
+                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, newText.length)
+            }
+            node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, selArgs)
+        }
+        return ok
+    }
+
+    fun inputText(text: String, append: Boolean = true): Boolean {
+        val focused = findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return false
+        val current = if (append) getRealText(focused) else ""
+        val newText = current + text
+        return setTextAndMoveCursorToEnd(focused, newText)
     }
 
     fun sendBackspace(): Boolean {
         val focused = findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return false
-        val existing = focused.text?.toString() ?: return false
+        val existing = getRealText(focused)
         if (existing.isEmpty()) return true
         val trimmed = existing.dropLast(1)
-        val args = Bundle().apply {
-            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, trimmed)
+        return setTextAndMoveCursorToEnd(focused, trimmed)
+    }
+
+    fun sendEnter(): Boolean {
+        val focused = findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (focused.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)) {
+                return true
+            }
         }
-        return focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        val current = getRealText(focused)
+        return setTextAndMoveCursorToEnd(focused, current + "\n")
     }
 
     fun pasteText(text: String): Boolean {
         val cb = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         cb.setPrimaryClip(ClipData.newPlainText("RemotePC", text))
-        val focused = findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-        if (focused != null) {
-            if (focused.performAction(AccessibilityNodeInfo.ACTION_PASTE)) return true
-            return inputText(text, append = true)
-        }
-        return true
+        val focused = findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return true
+        val current = getRealText(focused)
+        return setTextAndMoveCursorToEnd(focused, current + text)
     }
 }

@@ -1,6 +1,9 @@
 package com.firework.remote3000
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -8,12 +11,20 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.content.res.Configuration
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+import android.media.AudioAttributes
+import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioPlaybackCaptureConfiguration
+import android.media.AudioRecord
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
@@ -27,9 +38,14 @@ import android.util.DisplayMetrics
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
@@ -44,8 +60,11 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
 
         private const val CHANNEL_ID = "remote_screen_3000_channel"
         private const val CHAT_CHANNEL_ID = "remote_screen_3000_chat"
+        private const val ALERT_CHANNEL_ID = "remote_screen_3000_alert"
         private const val NOTIF_ID = 3000
         private const val CHAT_NOTIF_ID = 3001
+        private const val ALERT_NOTIF_ID = 3002
+        private const val AUDIO_SAMPLE_RATE = 44100
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -56,35 +75,54 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
     private var captureHandler: Handler? = null
     private var httpServer: LocalHttpServer? = null
 
-    // Reusable buffers to eliminate GC stutter
+    // Wake locks: PARTIAL keeps server alive while locked; optional screen lock keeps display awake
+    private var cpuWakeLock: PowerManager.WakeLock? = null
+    private var keepAwakeLock: PowerManager.WakeLock? = null
+
+    // Reusable video buffers + Canvas (ZERO per-frame IntArray allocation -> smooth 60 FPS!)
     private var reusableRawBitmap: Bitmap? = null
     private var reusableCropBitmap: Bitmap? = null
-    private val reusableBaos = ByteArrayOutputStream(96 * 1024)
+    private var reusableCropCanvas: Canvas? = null
+    private val reusableBaos = ByteArrayOutputStream(256 * 1024)
+
+    // Audio playback capture (Android 10+)
+    @Volatile
+    private var audioOutputMode: String = "phone"
+    private val audioCapturing = AtomicBoolean(false)
+    private var audioRecord: AudioRecord? = null
+    private var audioThread: Thread? = null
+    private val audioSubscribers = CopyOnWriteArrayList<LinkedBlockingQueue<ByteArray>>()
 
     @Volatile
-    private var captureWidth: Int = 540
+    private var captureWidth: Int = 1080
 
     @Volatile
-    private var captureHeight: Int = 960
+    private var captureHeight: Int = 1920
 
     @Volatile
-    private var maxEdgePx: Int = 720
+    private var lastRealW: Int = 0
 
     @Volatile
-    private var targetFps: Int = 24
+    private var lastRealH: Int = 0
+
+    // Default: 60 FPS + 4K (native up to 2160p/3840p)
+    @Volatile
+    private var maxEdgePx: Int = 2160
 
     @Volatile
-    private var jpegQuality: Int = 55
+    private var targetFps: Int = 60
+
+    @Volatile
+    private var jpegQuality: Int = 78
 
     @Volatile
     private var lastEncodedAtMs: Long = 0L
-
-    private var realDensityDpi: Int = 320
 
     private val frameSeq = AtomicLong(0L)
     private val latestFrame = AtomicReference<LocalHttpServer.FramePacket?>(null)
     private val frameLock = Object()
     private val captureConfigLock = Object()
+    private val lastAlertByIp = ConcurrentHashMap<String, Long>()
 
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
@@ -92,7 +130,20 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
         }
     }
 
+    private val displayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) {}
+        override fun onDisplayRemoved(displayId: Int) {}
+        override fun onDisplayChanged(displayId: Int) {
+            checkOrientationAndResize()
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        checkOrientationAndResize()
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -144,6 +195,15 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
                 description = "แจ้งเตือนข้อความแชทที่ส่งมาจากคอมพิวเตอร์"
             }
         )
+        nm.createNotificationChannel(
+            NotificationChannel(
+                ALERT_CHANNEL_ID,
+                "Security Alerts",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "แจ้งเตือนเมื่อมีอุปกรณ์พยายามควบคุมหน้าจอขณะปิดการควบคุม"
+            }
+        )
 
         val openIntent = PendingIntent.getActivity(
             this,
@@ -163,8 +223,8 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
 
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentTitle("Remote Screen :$port กำลังทำงาน")
-            .setContentText("เปิดบนคอม: http://$ip:$port")
+            .setContentTitle("Remote Screen :$port กำลังทำงาน (60 FPS)")
+            .setContentText("เปิดบน PC/Mac: http://$ip:$port")
             .setOngoing(true)
             .setContentIntent(openIntent)
             .addAction(0, "หยุดเซิร์ฟเวอร์", stopIntent)
@@ -177,10 +237,59 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
         }
     }
 
+    @SuppressLint("WakelockTimeout")
+    private fun acquireWakeLocks() {
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (cpuWakeLock == null) {
+            cpuWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "RemoteScreen3000:CpuAlive").apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        }
+        updateKeepScreenAwake(ServiceState.keepScreenAwake.value)
+    }
+
+    @Suppress("DEPRECATION")
+    @SuppressLint("WakelockTimeout")
+    private fun updateKeepScreenAwake(enabled: Boolean) {
+        if (enabled) {
+            if (keepAwakeLock == null) {
+                val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+                keepAwakeLock = pm.newWakeLock(
+                    PowerManager.SCREEN_DIM_WAKE_LOCK or PowerManager.ON_AFTER_RELEASE,
+                    "RemoteScreen3000:KeepScreen"
+                ).apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+            }
+        } else {
+            try {
+                if (keepAwakeLock?.isHeld == true) keepAwakeLock?.release()
+            } catch (_: Exception) {
+            }
+            keepAwakeLock = null
+        }
+    }
+
+    private fun releaseWakeLocks() {
+        try {
+            if (keepAwakeLock?.isHeld == true) keepAwakeLock?.release()
+        } catch (_: Exception) {
+        }
+        keepAwakeLock = null
+        try {
+            if (cpuWakeLock?.isHeld == true) cpuWakeLock?.release()
+        } catch (_: Exception) {
+        }
+        cpuWakeLock = null
+    }
+
     private fun startServerAndCapture(resultCode: Int, resultData: Intent, port: Int) {
         try {
             stopCaptureOnly()
             httpServer?.stop()
+            acquireWakeLocks()
 
             ServiceState.lastError.value = null
             ServiceState.port.value = port
@@ -194,6 +303,8 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
             server.start()
             httpServer = server
             ServiceState.onNewChatBroadcast = { msg -> server.broadcastChat(msg) }
+            ServiceState.onClientsChangedBroadcast = { server.broadcastClients() }
+            ServiceState.onKeepAwakeChanged = { enabled -> updateKeepScreenAwake(enabled) }
             ServiceState.isRunning.value = true
 
             val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
@@ -206,11 +317,14 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
             val handler = Handler(thread.looper)
             captureHandler = handler
 
-            // Required on Android 14+ BEFORE createVirtualDisplay
             projection.registerCallback(projectionCallback, handler)
 
+            val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+            dm.registerDisplayListener(displayListener, handler)
+
             val (realW, realH, densityDpi) = getRealDisplayMetrics()
-            realDensityDpi = densityDpi
+            lastRealW = realW
+            lastRealH = realH
             computeScaledDimensions(realW, realH, maxEdgePx)
 
             val reader = ImageReader.newInstance(
@@ -239,8 +353,20 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
         }
     }
 
+    private fun checkOrientationAndResize() {
+        val handler = captureHandler ?: return
+        handler.post {
+            val (realW, realH, _) = getRealDisplayMetrics()
+            if (realW != lastRealW || realH != lastRealH) {
+                lastRealW = realW
+                lastRealH = realH
+                reconfigureVirtualDisplay()
+            }
+        }
+    }
+
     private fun computeScaledDimensions(realW: Int, realH: Int, edge: Int) {
-        val clampedEdge = edge.coerceIn(360, 1280).toFloat()
+        val clampedEdge = edge.coerceIn(360, 3840).toFloat()
         val scale = (clampedEdge / maxOf(realW, realH).toFloat()).coerceIn(0.2f, 1.0f)
         captureWidth = ((realW * scale).toInt() / 2 * 2).coerceAtLeast(240)
         captureHeight = ((realH * scale).toInt() / 2 * 2).coerceAtLeast(240)
@@ -255,7 +381,7 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
 
         try {
             val now = System.currentTimeMillis()
-            val minIntervalMs = (1000L / targetFps.coerceIn(5, 30))
+            val minIntervalMs = (1000L / targetFps.coerceIn(10, 60))
             if (now - lastEncodedAtMs < minIntervalMs && latestFrame.get() != null) {
                 return
             }
@@ -284,17 +410,17 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
                     crop?.recycle()
                     crop = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
                     reusableCropBitmap = crop
+                    reusableCropCanvas = Canvas(crop)
                 }
-                val pixels = IntArray(w * h)
-                rawBmp.getPixels(pixels, 0, w, 0, 0, w, h)
-                crop.setPixels(pixels, 0, w, 0, 0, w, h)
+                val rect = Rect(0, 0, w, h)
+                reusableCropCanvas?.drawBitmap(rawBmp, rect, rect, null)
                 crop
             } else {
                 rawBmp
             }
 
             reusableBaos.reset()
-            encodeBmp.compress(Bitmap.CompressFormat.JPEG, jpegQuality.coerceIn(25, 92), reusableBaos)
+            encodeBmp.compress(Bitmap.CompressFormat.JPEG, jpegQuality.coerceIn(25, 95), reusableBaos)
             val jpegBytes = reusableBaos.toByteArray()
 
             val packet = LocalHttpServer.FramePacket(
@@ -306,7 +432,7 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
                 frameLock.notifyAll()
             }
         } catch (_: Exception) {
-            // Skip frame on resize transition
+            // Skip transitional frame during rotation/resize
         } finally {
             try {
                 image.close()
@@ -327,6 +453,144 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
             wm.defaultDisplay.getRealMetrics(out)
             Triple(out.widthPixels, out.heightPixels, out.densityDpi)
         }
+    }
+
+    // ================= Audio Playback Capture (Android 10+) =================
+    @SuppressLint("MissingPermission")
+    private fun startAudioCaptureIfPossible(): Pair<Boolean, String> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            return Pair(false, "ส่งเสียงไปคอมรองรับตั้งแต่ Android 10 ขึ้นไป")
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            return Pair(false, "กรุณาอนุญาตสิทธิ์ไมโครโฟน/เสียงในแอปบนมือถือก่อน")
+        }
+        val projection = mediaProjection
+            ?: return Pair(false, "ยังไม่ได้เริ่มแชร์หน้าจอ")
+
+        if (audioCapturing.get()) return Pair(true, "กำลังส่งเสียงไปคอมอยู่แล้ว")
+
+        return try {
+            val config = AudioPlaybackCaptureConfiguration.Builder(projection)
+                .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+                .addMatchingUsage(AudioAttributes.USAGE_GAME)
+                .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
+                .build()
+
+            val format = AudioFormat.Builder()
+                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                .setSampleRate(AUDIO_SAMPLE_RATE)
+                .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                .build()
+
+            val minBuf = AudioRecord.getMinBufferSize(
+                AUDIO_SAMPLE_RATE,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT
+            ).coerceAtLeast(4096)
+
+            val record = AudioRecord.Builder()
+                .setAudioFormat(format)
+                .setBufferSizeInBytes(minBuf * 2)
+                .setAudioPlaybackCaptureConfig(config)
+                .build()
+
+            audioRecord = record
+            audioCapturing.set(true)
+            record.startRecording()
+
+            audioThread = Thread({
+                val chunk = ByteArray(2048)
+                while (audioCapturing.get()) {
+                    val read = try {
+                        record.read(chunk, 0, chunk.size)
+                    } catch (_: Exception) {
+                        -1
+                    }
+                    if (read > 0 && audioSubscribers.isNotEmpty()) {
+                        val copy = chunk.copyOf(read)
+                        for (q in audioSubscribers) {
+                            if (q.size > 12) q.poll()
+                            q.offer(copy)
+                        }
+                    } else if (read < 0) {
+                        break
+                    }
+                }
+            }, "AudioCaptureThread").apply {
+                isDaemon = true
+                start()
+            }
+            Pair(true, "เปิดส่งเสียงไปยังคอมพิวเตอร์แล้ว")
+        } catch (e: Exception) {
+            stopAudioCapture()
+            Pair(false, "เปิดจับเสียงไม่สำเร็จ: ${e.message}")
+        }
+    }
+
+    private fun stopAudioCapture() {
+        audioCapturing.set(false)
+        try {
+            audioRecord?.stop()
+        } catch (_: Exception) {
+        }
+        try {
+            audioRecord?.release()
+        } catch (_: Exception) {
+        }
+        audioRecord = null
+        audioThread = null
+    }
+
+    override fun getAudioOutputMode(): String = audioOutputMode
+    override fun isAudioCaptureSupported(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+
+    override fun setAudioOutputMode(mode: String): Pair<Boolean, String> {
+        val m = mode.lowercase()
+        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        return when (m) {
+            "phone" -> {
+                audioOutputMode = "phone"
+                stopAudioCapture()
+                try {
+                    am.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, 0)
+                } catch (_: Exception) {
+                }
+                Pair(true, "สลับเสียงออกที่มือถือแล้ว")
+            }
+            "pc" -> {
+                val (ok, msg) = startAudioCaptureIfPossible()
+                if (!ok) return Pair(false, msg)
+                audioOutputMode = "pc"
+                try {
+                    am.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_MUTE, 0)
+                } catch (_: Exception) {
+                }
+                Pair(true, "สลับเสียงออกที่คอมพิวเตอร์แล้ว (หากบางรุ่นเงียบ ให้เลือก 'ทั้งคู่')")
+            }
+            "both" -> {
+                val (ok, msg) = startAudioCaptureIfPossible()
+                if (!ok) return Pair(false, msg)
+                audioOutputMode = "both"
+                try {
+                    am.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, 0)
+                } catch (_: Exception) {
+                }
+                Pair(true, "เปิดเสียงออกทั้งคอมและมือถือแล้ว")
+            }
+            else -> Pair(false, "โหมดเสียงไม่ถูกต้อง")
+        }
+    }
+
+    override fun subscribeAudio(): LinkedBlockingQueue<ByteArray> {
+        val q = LinkedBlockingQueue<ByteArray>(20)
+        audioSubscribers.add(q)
+        return q
+    }
+
+    override fun unsubscribeAudio(queue: LinkedBlockingQueue<ByteArray>) {
+        audioSubscribers.remove(queue)
     }
 
     override fun getLatestFrame(): LocalHttpServer.FramePacket? = latestFrame.get()
@@ -352,11 +616,17 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
     override fun getJpegQuality(): Int = jpegQuality
     override fun getMaxEdgePx(): Int = maxEdgePx
 
+    override fun getScreenLockStatus(): Pair<Boolean, Boolean> {
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+        return Pair(pm.isInteractive, km.isKeyguardLocked)
+    }
+
     override fun updateStreamSettings(fps: Int?, quality: Int?, maxEdge: Int?) {
-        if (fps != null) targetFps = fps.coerceIn(5, 30)
-        if (quality != null) jpegQuality = quality.coerceIn(25, 92)
+        if (fps != null) targetFps = fps.coerceIn(10, 60)
+        if (quality != null) jpegQuality = quality.coerceIn(25, 95)
         if (maxEdge != null) {
-            val clamped = maxEdge.coerceIn(360, 1080)
+            val clamped = maxEdge.coerceIn(360, 3840)
             if (clamped != maxEdgePx) {
                 maxEdgePx = clamped
                 captureHandler?.post { reconfigureVirtualDisplay() }
@@ -381,6 +651,7 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
                 oldReader?.close()
             } catch (_: Exception) {
             }
+            httpServer?.broadcastOrientation(captureWidth, captureHeight)
         }
     }
 
@@ -394,7 +665,7 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
                     PowerManager.ON_AFTER_RELEASE,
                 "RemoteScreen3000:Wake"
             )
-            wl.acquire(3000L)
+            wl.acquire(4000L)
             mainHandler.postDelayed({
                 if (wl.isHeld) {
                     try {
@@ -402,7 +673,7 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
                     } catch (_: Exception) {
                     }
                 }
-            }, 3100L)
+            }, 4100L)
             true
         } catch (_: Exception) {
             false
@@ -425,7 +696,39 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
         }
     }
 
-    override fun onIncomingPcChat(text: String) {
+    override fun onUnauthorizedControlAttempt(clientIp: String, deviceName: String) {
+        val now = System.currentTimeMillis()
+        val prev = lastAlertByIp[clientIp] ?: 0L
+        if (now - prev < 3000L) return
+        lastAlertByIp[clientIp] = now
+
+        val msg = "มีคนกำลังพยายามคุมจอของคุณ! ($deviceName • IP: $clientIp)"
+        ServiceState.addSecurityAlert(clientIp, deviceName, msg)
+
+        val openIntent = PendingIntent.getActivity(
+            this,
+            3,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val notif = NotificationCompat.Builder(this, ALERT_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle("🚨 มีคนกำลังพยายามคุมจอของคุณ!")
+            .setContentText("$deviceName • IP: $clientIp")
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .setAutoCancel(true)
+            .setContentIntent(openIntent)
+            .build()
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.notify(ALERT_NOTIF_ID, notif)
+
+        mainHandler.post {
+            Toast.makeText(applicationContext, "🚨 $msg", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    override fun onIncomingPcChat(text: String, senderLabel: String) {
         val openIntent = PendingIntent.getActivity(
             this,
             2,
@@ -434,7 +737,7 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
         )
         val notif = NotificationCompat.Builder(this, CHAT_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentTitle("💬 ข้อความจากคอมพิวเตอร์")
+            .setContentTitle("💬 ข้อความจาก $senderLabel")
             .setContentText(text)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
@@ -443,7 +746,7 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(CHAT_NOTIF_ID, notif)
         mainHandler.post {
-            Toast.makeText(applicationContext, "💬 PC: $text", Toast.LENGTH_LONG).show()
+            Toast.makeText(applicationContext, "💬 $senderLabel: $text", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -476,7 +779,13 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
     }
 
     private fun stopCaptureOnly() {
+        stopAudioCapture()
         ServiceState.isStreaming.value = false
+        try {
+            val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+            dm.unregisterDisplayListener(displayListener)
+        } catch (_: Exception) {
+        }
         try {
             virtualDisplay?.release()
         } catch (_: Exception) {
@@ -503,6 +812,7 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
         captureThread = null
         captureHandler = null
 
+        reusableCropCanvas = null
         reusableRawBitmap?.recycle()
         reusableRawBitmap = null
         reusableCropBitmap?.recycle()
@@ -511,7 +821,10 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
 
     private fun stopAllAndSelf() {
         ServiceState.onNewChatBroadcast = null
+        ServiceState.onClientsChangedBroadcast = null
+        ServiceState.onKeepAwakeChanged = null
         stopCaptureOnly()
+        releaseWakeLocks()
         try {
             httpServer?.stop()
         } catch (_: Exception) {
@@ -519,6 +832,7 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
         httpServer = null
         ServiceState.isRunning.value = false
         ServiceState.connectedClients.value = 0
+        ServiceState.connectedDevices.value = emptyList()
         synchronized(frameLock) {
             frameLock.notifyAll()
         }
@@ -528,7 +842,10 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
 
     override fun onDestroy() {
         ServiceState.onNewChatBroadcast = null
+        ServiceState.onClientsChangedBroadcast = null
+        ServiceState.onKeepAwakeChanged = null
         stopCaptureOnly()
+        releaseWakeLocks()
         httpServer?.stop()
         httpServer = null
         ServiceState.isRunning.value = false
