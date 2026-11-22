@@ -6,7 +6,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 object ServiceState {
     const val DEFAULT_PORT = 3000
-    const val VERSION_NAME = "2.4.0"
+    const val VERSION_NAME = "2.5.0"
 
     data class ChatMessage(
         val id: Long,
@@ -35,6 +35,7 @@ object ServiceState {
 
     val isRunning = MutableStateFlow(false)
     val isStreaming = MutableStateFlow(false)
+    val floatingBuddyRunning = MutableStateFlow(false)
     val accessibilityEnabled = MutableStateFlow(false)
     val controlAllowed = MutableStateFlow(true)
     val keepScreenAwake = MutableStateFlow(true)

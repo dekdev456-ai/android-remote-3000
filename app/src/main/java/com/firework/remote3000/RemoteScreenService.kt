@@ -705,6 +705,34 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
         }
     }
 
+    override fun toggleFloatingBuddy(enabled: Boolean): Pair<Boolean, String> {
+        return try {
+            if (enabled) {
+                if (!android.provider.Settings.canDrawOverlays(this)) {
+                    val permIntent = Intent(
+                        android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        android.net.Uri.parse("package:$packageName")
+                    ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                    mainHandler.post { startActivity(permIntent) }
+                    return Pair(false, "กรุณากดอนุญาต 'แสดงทับแอปอื่น' บนมือถือก่อน")
+                }
+                val i = Intent(this, FloatingBuddyService::class.java).apply {
+                    action = FloatingBuddyService.ACTION_START
+                }
+                startService(i)
+                Pair(true, "เปิดคู่หูลอย 'น้องพลุ' ทับทุกแอปแล้ว ✨")
+            } else {
+                val i = Intent(this, FloatingBuddyService::class.java).apply {
+                    action = FloatingBuddyService.ACTION_STOP
+                }
+                startService(i)
+                Pair(true, "ซ่อนคู่หูลอยแล้ว")
+            }
+        } catch (e: Exception) {
+            Pair(false, "เปิดคู่หูลอยไม่สำเร็จ: ${e.message}")
+        }
+    }
+
     override fun onUnauthorizedControlAttempt(clientIp: String, deviceName: String) {
         val now = System.currentTimeMillis()
         val prev = lastAlertByIp[clientIp] ?: 0L

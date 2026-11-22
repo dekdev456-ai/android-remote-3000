@@ -74,6 +74,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnBuddyMic: Button
     private lateinit var btnBuddyTopic: Button
     private lateinit var btnBuddyGame: Button
+    private lateinit var btnToggleFloatingBuddy: Button
     private lateinit var switchBuddyVoice: SwitchMaterial
     private var tts: TextToSpeech? = null
     private var ttsReady = false
@@ -156,6 +157,7 @@ class MainActivity : AppCompatActivity() {
         btnBuddyMic = findViewById(R.id.btnBuddyMic)
         btnBuddyTopic = findViewById(R.id.btnBuddyTopic)
         btnBuddyGame = findViewById(R.id.btnBuddyGame)
+        btnToggleFloatingBuddy = findViewById(R.id.btnToggleFloatingBuddy)
         switchBuddyVoice = findViewById(R.id.switchBuddyVoice)
 
         initBuddyTts()
@@ -294,6 +296,24 @@ class MainActivity : AppCompatActivity() {
         }
         btnBuddyMic.setOnClickListener {
             startVoiceRecognition()
+        }
+        btnToggleFloatingBuddy.setOnClickListener {
+            if (ServiceState.floatingBuddyRunning.value) {
+                startService(Intent(this, FloatingBuddyService::class.java).apply {
+                    action = FloatingBuddyService.ACTION_STOP
+                })
+            } else {
+                if (!Settings.canDrawOverlays(this)) {
+                    Toast.makeText(this, "กรุณาอนุญาต 'แสดงทับแอปอื่น' เพื่อให้คู่หูลอยบน TikTok ได้", Toast.LENGTH_LONG).show()
+                    startActivity(
+                        Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
+                    )
+                } else {
+                    startService(Intent(this, FloatingBuddyService::class.java).apply {
+                        action = FloatingBuddyService.ACTION_START
+                    })
+                }
+            }
         }
     }
 
@@ -544,6 +564,16 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             ServiceState.lastError.collect { err ->
                 tvError.text = err ?: ""
+            }
+        }
+
+        lifecycleScope.launch {
+            ServiceState.floatingBuddyRunning.collect { running ->
+                btnToggleFloatingBuddy.text = if (running) {
+                    "🚫 ปิดคู่หูลอยบนหน้าจอ"
+                } else {
+                    "✨ เปิดคู่หูลอยทับทุกแอป (TikTok / เกม / ทุกหน้า)"
+                }
             }
         }
     }

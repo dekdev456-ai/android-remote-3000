@@ -7,6 +7,7 @@ import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Context
 import android.graphics.Path
+import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -16,10 +17,15 @@ import android.util.DisplayMetrics
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.Collections
+import java.util.LinkedHashMap
 
 class RemoteAccessibilityService : AccessibilityService() {
 
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val capturedChatMap = Collections.synchronizedMap(LinkedHashMap<String, JSONObject>())
 
     companion object {
         @Volatile
@@ -53,7 +59,7 @@ class RemoteAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // Not needed for remote gesture injection
+        // No heavy background work here; scraping runs on demand
     }
 
     override fun onInterrupt() {
@@ -210,5 +216,215 @@ class RemoteAccessibilityService : AccessibilityService() {
         val focused = findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return true
         val current = getRealText(focused)
         return setTextAndMoveCursorToEnd(focused, current + text)
+    }
+
+    // ================= TIKTOK / ACTIVE APP CHAT BRIDGE =================
+
+    fun clearCapturedChat() {
+        capturedChatMap.clear()
+    }
+
+    fun openTikTokApp(): Pair<Boolean, String> {
+        val pkgs = listOf("com.ss.android.ugc.trill", "com.zhiliaoapp.musically")
+        for (pkg in pkgs) {
+            val intent = packageManager.getLaunchIntentForPackage(pkg)
+            if (intent != null) {
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+                return Pair(true, "เปิดแอป TikTok บนมือถือแล้ว")
+            }
+        }
+        return Pair(false, "ไม่พบแอป TikTok บนมือถือเครื่องนี้")
+    }
+
+    fun findAndClickText(keyword: String): Pair<Boolean, String> {
+        val root = rootInActiveWindow ?: return Pair(false, "ยังอ่านหน้าจอไม่ได้")
+        val target = findNodeContainingText(root, keyword.trim())
+            ?: return Pair(false, "ยังไม่เจอคำว่า '$keyword' บนหน้าจอตอนนี้ (กรุณาเปิดหน้ากล่องข้อความ TikTok ก่อน)")
+
+        val rect = Rect()
+        target.getBoundsInScreen(rect)
+        val (w, h) = getScreenBounds()
+        if (!rect.isEmpty && w > 0 && h > 0) {
+            tap(rect.centerX().toFloat() / w, rect.centerY().toFloat() / h)
+            return Pair(true, "แตะเข้าห้อง '$keyword' แล้ว")
+        }
+        var cur: AccessibilityNodeInfo? = target
+        while (cur != null) {
+            if (cur.isClickable && cur.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                return Pair(true, "แตะเข้าห้อง '$keyword' แล้ว")
+            }
+            cur = cur.parent
+        }
+        return Pair(false, "เจอ '$keyword' แต่กดไม่สำเร็จ")
+    }
+
+    private fun findNodeContainingText(node: AccessibilityNodeInfo?, keyword: String): AccessibilityNodeInfo? {
+        if (node == null) return null
+        val t = node.text?.toString() ?: ""
+        val d = node.contentDescription?.toString() ?: ""
+        if (t.contains(keyword, ignoreCase = true) || d.contains(keyword, ignoreCase = true)) {
+            return node
+        }
+        for (i in 0 until node.childCount) {
+            val found = findNodeContainingText(node.getChild(i), keyword)
+            if (found != null) return found
+        }
+        return null
+    }
+
+    fun scrapeActiveAppChat(): JSONObject {
+        val root = rootInActiveWindow
+        val pkg = root?.packageName?.toString() ?: ""
+        val isTikTok = pkg.contains("trill", true) || pkg.contains("musically", true) || pkg.contains("tiktok", true)
+        val (screenW, screenH) = getScreenBounds()
+
+        val visibleItems = mutableListOf<Triple<Int, String, String>>() // (y, side, text)
+        var roomTitle = ""
+
+        if (root != null) {
+            val ignoreSet = setOf(
+                "ส่งข้อความ...", "message...", "send a message...", "send", "ส่ง",
+                "back", "ย้อนกลับ", "more", "เพิ่มเติม", "emoji", "sticker", "camera"
+            )
+            fun walk(node: AccessibilityNodeInfo?) {
+                if (node == null || !node.isVisibleToUser) return
+                val isEdit = node.isEditable || (node.className?.toString()?.contains("EditText", true) == true)
+                if (!isEdit) {
+                    val txt = node.text?.toString()?.trim().orEmpty()
+                    if (txt.isNotEmpty() && txt.length <= 600 && !ignoreSet.contains(txt.lowercase())) {
+                        val rect = Rect()
+                        node.getBoundsInScreen(rect)
+                        if (rect.top in 1 until (screenH * 0.88).toInt()) {
+                            if (rect.top < (screenH * 0.14).toInt() && roomTitle.isEmpty()) {
+                                roomTitle = txt
+                            } else if (rect.top >= (screenH * 0.12).toInt()) {
+                                val centerRatio = rect.centerX().toFloat() / screenW.toFloat()
+                                val side = when {
+                                    centerRatio > 0.56f -> "me"
+                                    centerRatio < 0.44f -> "them"
+                                    else -> "meta"
+                                }
+                                visibleItems.add(Triple(rect.top, side, txt))
+                            }
+                        }
+                    }
+                }
+                for (i in 0 until node.childCount) {
+                    walk(node.getChild(i))
+                }
+            }
+            walk(root)
+        }
+
+        visibleItems.sortBy { it.first }
+        for ((_, side, txt) in visibleItems) {
+            val key = "$side::$txt"
+            if (!capturedChatMap.containsKey(key)) {
+                capturedChatMap[key] = JSONObject()
+                    .put("side", side)
+                    .put("text", txt)
+                if (capturedChatMap.size > 400) {
+                    val firstKey = capturedChatMap.keys.firstOrNull()
+                    if (firstKey != null) capturedChatMap.remove(firstKey)
+                }
+            }
+        }
+
+        val arr = JSONArray()
+        synchronized(capturedChatMap) {
+            for (v in capturedChatMap.values) arr.put(v)
+        }
+
+        return JSONObject()
+            .put("ok", true)
+            .put("packageName", pkg)
+            .put("isTikTok", isTikTok)
+            .put("roomTitle", roomTitle.ifEmpty { if (isTikTok) "TikTok" else pkg })
+            .put("visibleCount", visibleItems.size)
+            .put("totalCount", arr.length())
+            .put("messages", arr)
+    }
+
+    fun sendChatToActiveApp(text: String): Pair<Boolean, String> {
+        val clean = text.trim()
+        if (clean.isEmpty()) return Pair(false, "ข้อความว่าง")
+        val root = rootInActiveWindow ?: return Pair(false, "ไม่พบหน้าต่างแอปที่เปิดอยู่")
+
+        val editNode = findEditableNode(root)
+            ?: findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            ?: return Pair(false, "ไม่พบช่องพิมพ์ข้อความบนหน้าจอ (กรุณาเปิดห้องแชท TikTok ก่อน)")
+
+        val editRect = Rect()
+        editNode.getBoundsInScreen(editRect)
+        editNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        editNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        val setOk = setTextAndMoveCursorToEnd(editNode, clean)
+        if (!setOk) {
+            pasteText(clean)
+        }
+
+        // Wait briefly for Send button to appear after typing, then tap Send!
+        mainHandler.postDelayed({
+            val freshRoot = rootInActiveWindow ?: return@postDelayed
+            val sendBtn = findSendButton(freshRoot, editRect)
+            if (sendBtn != null) {
+                val r = Rect()
+                sendBtn.getBoundsInScreen(r)
+                val (w, h) = getScreenBounds()
+                if (!sendBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK) && !r.isEmpty) {
+                    tap(r.centerX().toFloat() / w, r.centerY().toFloat() / h)
+                }
+            } else {
+                // Fallback: tap rightmost edge on the same row as the EditText (where TikTok's red Send arrow sits)
+                val (w, h) = getScreenBounds()
+                if (!editRect.isEmpty && w > 0 && h > 0) {
+                    tap(0.93f, editRect.centerY().toFloat() / h)
+                } else {
+                    sendEnter()
+                }
+            }
+        }, 180L)
+
+        return Pair(true, "ส่งข้อความ '$clean' เข้าแอปบนมือถือแล้ว")
+    }
+
+    private fun findEditableNode(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (node == null || !node.isVisibleToUser) return null
+        if (node.isEditable || node.className?.toString()?.contains("EditText", true) == true) {
+            return node
+        }
+        for (i in 0 until node.childCount) {
+            val found = findEditableNode(node.getChild(i))
+            if (found != null) return found
+        }
+        return null
+    }
+
+    private fun findSendButton(root: AccessibilityNodeInfo?, editRect: Rect): AccessibilityNodeInfo? {
+        if (root == null) return null
+        var bestByLabel: AccessibilityNodeInfo? = null
+        var bestByPos: AccessibilityNodeInfo? = null
+        var bestRightX = -1
+
+        fun walk(node: AccessibilityNodeInfo?) {
+            if (node == null || !node.isVisibleToUser) return
+            val label = ((node.text?.toString() ?: "") + " " + (node.contentDescription?.toString() ?: "")).lowercase()
+            if (label.contains("ส่ง") || label.contains("send") || label.contains("โพสต์") || label.contains("post")) {
+                if (node.isClickable) bestByLabel = node
+            }
+            if (node.isClickable && !node.isEditable && !editRect.isEmpty) {
+                val r = Rect()
+                node.getBoundsInScreen(r)
+                val sameRow = kotlin.math.abs(r.centerY() - editRect.centerY()) < (editRect.height().coerceAtLeast(60) * 1.4f)
+                if (sameRow && r.left >= editRect.right - 20 && r.centerX() > bestRightX) {
+                    bestRightX = r.centerX()
+                    bestByPos = node
+                }
+            }
+            for (i in 0 until node.childCount) walk(node.getChild(i))
+        }
+        walk(root)
+        return bestByLabel ?: bestByPos
     }
 }

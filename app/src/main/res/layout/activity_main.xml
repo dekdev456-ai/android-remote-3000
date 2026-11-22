@@ -178,6 +178,15 @@
                     android:text="คุย"
                     android:textAllCaps="false" />
             </LinearLayout>
+
+            <Button
+                android:id="@+id/btnToggleFloatingBuddy"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="✨ เปิดคู่หูลอยทับทุกแอป (TikTok / เกม / ทุกหน้า)"
+                android:textAllCaps="false"
+                android:textSize="12.5sp" />
         </LinearLayout>
 
         <!-- Security & Remote Control Toggles -->

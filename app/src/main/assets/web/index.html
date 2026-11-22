@@ -212,6 +212,7 @@
     <span id="orientBadge" class="pill">📱 แนวตั้ง</span>
   </div>
   <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+    <button class="btn" id="btnFloatBuddy" onclick="toggleFloatingBuddy()">✨ คู่หูลอยบนจอ</button>
     <button class="btn" onclick="sendCmd({type:'wake'})">💡 เปิดจอ</button>
     <button class="btn" onclick="toggleFullscreen()">⛶ เต็มจอ</button>
     <button class="btn" onclick="reloadStream()">🔄 รีเชื่อมต่อ</button>
@@ -256,6 +257,33 @@
 
   <!-- Right Control Sidebar -->
   <div class="sidebar">
+    <!-- TikTok Chat Bridge (Room 67 + Send Directly from PC) -->
+    <div class="card" style="border-color: rgba(255, 42, 109, 0.45);">
+      <h3 style="color:#ff6b9d;">
+        🎵 แชท TikTok (ห้อง 67) • ดึง &amp; ส่งสด
+        <label style="font-size:10.5px; color:var(--dim); display:flex; align-items:center; gap:4px; cursor:pointer;">
+          <input type="checkbox" id="chkTikTokAuto" onchange="toggleTikTokAuto(this.checked)" style="accent-color:#ff2a6d;" /> ซิงก์สด
+        </label>
+      </h3>
+      <div style="display:flex; gap:4px; flex-wrap:wrap; margin-bottom:6px;">
+        <button class="btn" onclick="sendCmd({type:'tiktok_open'})">🎵 เปิด TikTok</button>
+        <button class="btn" onclick="sendCmd({type:'tiktok_find_chat', keyword: document.getElementById('ttRoomKw').value || '67'})">🔎 เข้าห้อง</button>
+        <input type="text" id="ttRoomKw" value="67" style="width:52px; padding:4px 6px; text-align:center;" title="ชื่อห้องแชท TikTok" />
+        <button class="btn primary" onclick="fetchTikTokChat()">🔄 ดึงแชท</button>
+        <button class="btn" onclick="scrollAndFetchTikTok()">📜 ดึงย้อนหลัง</button>
+        <button class="btn" onclick="copyAllTikTokChat()" title="คัดลอกข้อความทั้งหมด">📋</button>
+        <button class="btn" onclick="sendCmd({type:'tiktok_clear_cache'}); setTimeout(fetchTikTokChat, 200)" title="ล้างรายการที่เก็บ">🧹</button>
+      </div>
+      <div id="ttMeta" class="hint" style="margin-bottom:4px;">เปิดห้องแชท "67" ใน TikTok บนมือถือ แล้วกด 🔄 ดึงแชท หรือเปิด ⚡ ซิงก์สด</div>
+      <div class="chat-box" id="ttChatBox" style="height:155px;">
+        <div class="hint">ยังไม่ได้ดึงข้อความจาก TikTok</div>
+      </div>
+      <div style="display:flex; gap:5px;">
+        <input type="text" id="ttSendInp" placeholder="พิมพ์ข้อความส่งเข้าแชท TikTok ห้อง 67..." onkeydown="if(event.key==='Enter') sendTikTokReply()" />
+        <button class="btn primary" style="background:linear-gradient(135deg,#ff2a6d,#00f5d4);" onclick="sendTikTokReply()">📤 ส่ง</button>
+      </div>
+    </div>
+
     <!-- Connected Devices & Security Monitor -->
     <div class="card">
       <h3>👥 ผู้เข้าใช้งานตอนนี้ (PC + Mac พร้อมกัน) <span id="clientCountBadge" style="color:var(--green);">0</span></h3>
@@ -362,6 +390,9 @@
   let currentPin = sessionStorage.getItem('remote3000_pin') || '';
   let ws = null;
   let pingTimer = null;
+  let ttAutoTimer = null;
+  let ttMessagesCache = [];
+  let floatingBuddyOn = false;
   let audioAbort = null;
   let audioCtx = null;
   let gainNode = null;
@@ -374,6 +405,93 @@
   const chatBox = document.getElementById('chatBox');
   const keyCatcher = document.getElementById('realtimeKeyCatcher');
   let chatMessages = [];
+
+  function toggleFloatingBuddy() {
+    floatingBuddyOn = !floatingBuddyOn;
+    const btn = document.getElementById('btnFloatBuddy');
+    if (btn) btn.classList.toggle('active', floatingBuddyOn);
+    fetch('/api/control', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Pin': currentPin },
+      body: JSON.stringify({ type: 'floating_buddy', enabled: floatingBuddyOn })
+    }).then(r => r.json()).then(d => {
+      if (typeof d.floatingBuddy === 'boolean') {
+        floatingBuddyOn = d.floatingBuddy;
+        if (btn) btn.classList.toggle('active', floatingBuddyOn);
+      }
+      if (d.message) setLog(d.message);
+    }).catch(() => {});
+  }
+
+  async function fetchTikTokChat() {
+    const meta = document.getElementById('ttMeta');
+    const box = document.getElementById('ttChatBox');
+    try {
+      const r = await fetch('/api/tiktok-chat?pin=' + encodeURIComponent(currentPin) + '&t=' + Date.now());
+      const d = await r.json();
+      if (!d.ok) {
+        meta.textContent = '⚠️ ' + (d.error || 'ดึงแชทไม่สำเร็จ');
+        return;
+      }
+      ttMessagesCache = d.messages || [];
+      meta.textContent = (d.isTikTok ? '🎵 TikTok: ' : '📱 แอป: ') + (d.roomTitle || '-') + ` • เก็บได้ ${d.totalCount} ข้อความ`;
+      if (!ttMessagesCache.length) {
+        box.innerHTML = '<div class="hint">ยังไม่พบข้อความบนหน้าจอ — เปิดห้องแชท "67" ใน TikTok แล้วกดดึงอีกครั้ง</div>';
+        return;
+      }
+      box.innerHTML = '';
+      for (const m of ttMessagesCache) {
+        const div = document.createElement('div');
+        div.className = 'chat-msg ' + (m.side === 'me' ? 'pc' : 'phone');
+        if (m.side === 'meta') {
+          div.style.alignSelf = 'center';
+          div.style.background = 'rgba(148,163,184,0.14)';
+          div.style.border = 'none';
+          div.style.fontSize = '10px';
+          div.style.color = '#94a3b8';
+        }
+        div.textContent = m.text;
+        box.appendChild(div);
+      }
+      box.scrollTop = box.scrollHeight;
+    } catch (e) {
+      meta.textContent = '❌ ดึงแชทไม่สำเร็จ: ' + e.message;
+    }
+  }
+
+  async function scrollAndFetchTikTok() {
+    sendCmd({ type: 'tiktok_scroll_scrape' });
+    setTimeout(fetchTikTokChat, 550);
+  }
+
+  function toggleTikTokAuto(on) {
+    if (ttAutoTimer) { clearInterval(ttAutoTimer); ttAutoTimer = null; }
+    if (on) {
+      fetchTikTokChat();
+      ttAutoTimer = setInterval(fetchTikTokChat, 1800);
+    }
+  }
+
+  function sendTikTokReply() {
+    const inp = document.getElementById('ttSendInp');
+    const txt = inp.value.trim();
+    if (!txt) return;
+    inp.value = '';
+    fetch('/api/control', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Pin': currentPin },
+      body: JSON.stringify({ type: 'tiktok_send', text: txt })
+    }).then(r => r.json()).then(d => {
+      setLog(d.message || (d.ok ? 'ส่งเข้า TikTok แล้ว' : 'ส่งไม่สำเร็จ'));
+      setTimeout(fetchTikTokChat, 700);
+    }).catch(() => {});
+  }
+
+  function copyAllTikTokChat() {
+    const txt = ttMessagesCache.map(m => (m.side === 'me' ? '[คุณ] ' : m.side === 'them' ? '[แชท] ' : '') + m.text).join('\n');
+    if (!txt) return;
+    navigator.clipboard.writeText(txt).then(() => setLog(`คัดลอกแชท TikTok ${ttMessagesCache.length} ข้อความแล้ว!`));
+  }
 
   function setLog(msg) {
     logBox.textContent = new Date().toLocaleTimeString() + ' — ' + msg;

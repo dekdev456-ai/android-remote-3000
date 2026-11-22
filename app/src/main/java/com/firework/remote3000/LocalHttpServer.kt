@@ -50,6 +50,7 @@ class LocalHttpServer(
         fun unsubscribeAudio(queue: LinkedBlockingQueue<ByteArray>)
         fun onUnauthorizedControlAttempt(clientIp: String, deviceName: String)
         fun onIncomingPcChat(text: String, senderLabel: String)
+        fun toggleFloatingBuddy(enabled: Boolean): Pair<Boolean, String>
         fun installApkBytes(apkBytes: ByteArray): Pair<Boolean, String>
     }
 
@@ -330,9 +331,23 @@ class LocalHttpServer(
                         put("maxEdge", delegate.getMaxEdgePx())
                         put("audioOutput", delegate.getAudioOutputMode())
                         put("audioSupported", delegate.isAudioCaptureSupported())
+                        put("floatingBuddy", ServiceState.floatingBuddyRunning.value)
                         put("clients", ServiceState.connectedClients.value)
                     }
                     sendJson(output, 200, json)
+                }
+
+                method == "GET" && path == "/api/tiktok-chat" -> {
+                    if (!isPinValid(pinParam)) {
+                        sendJson(output, 401, JSONObject().put("ok", false).put("error", "Invalid PIN"))
+                        return
+                    }
+                    val acc = RemoteAccessibilityService.instance
+                    if (acc == null) {
+                        sendJson(output, 400, JSONObject().put("ok", false).put("error", "Accessibility Service ยังไม่ได้เปิดใช้งาน"))
+                        return
+                    }
+                    sendJson(output, 200, acc.scrapeActiveAppChat())
                 }
 
                 method == "GET" && path == "/api/clients" -> {
@@ -603,6 +618,10 @@ class LocalHttpServer(
         when (type) {
             "wake" -> return JSONObject().put("ok", delegate.wakeScreen())
             "volume" -> return JSONObject().put("ok", delegate.adjustVolume(json.optString("direction", "up")))
+            "floating_buddy" -> {
+                val (ok, msg) = delegate.toggleFloatingBuddy(json.optBoolean("enabled", true))
+                return JSONObject().put("ok", ok).put("floatingBuddy", ServiceState.floatingBuddyRunning.value).put("message", msg)
+            }
         }
 
         val acc = RemoteAccessibilityService.instance
@@ -611,6 +630,31 @@ class LocalHttpServer(
             return JSONObject()
                 .put("ok", false)
                 .put("error", "กรุณาเปิดสิทธิ์ Accessibility Service บนมือถือเพื่อควบคุม")
+        }
+
+        when (type) {
+            "tiktok_open" -> {
+                val (ok, msg) = acc.openTikTokApp()
+                return JSONObject().put("ok", ok).put("message", msg)
+            }
+            "tiktok_find_chat" -> {
+                val kw = json.optString("keyword", "67")
+                val (ok, msg) = acc.findAndClickText(kw)
+                return JSONObject().put("ok", ok).put("message", msg)
+            }
+            "tiktok_scroll_scrape" -> {
+                acc.swipe(0.5f, 0.30f, 0.5f, 0.78f, 260L)
+                return JSONObject().put("ok", true).put("message", "เลื่อนดึงแชทย้อนหลังแล้ว")
+            }
+            "tiktok_clear_cache" -> {
+                acc.clearCapturedChat()
+                return JSONObject().put("ok", true).put("message", "ล้างรายการแชทที่เก็บไว้แล้ว")
+            }
+            "tiktok_send" -> {
+                val txt = json.optString("text", "")
+                val (ok, msg) = acc.sendChatToActiveApp(txt)
+                return JSONObject().put("ok", ok).put("message", msg)
+            }
         }
 
         val ok = when (type) {
