@@ -99,9 +99,11 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
     private var floatingStopParams: WindowManager.LayoutParams? = null
 
     // Reusable video buffers + Canvas (ZERO per-frame IntArray allocation -> smooth 60 FPS!)
+    private val bitmapLock = Object()
     private var reusableRawBitmap: Bitmap? = null
     private var reusableCropBitmap: Bitmap? = null
     private var reusableCropCanvas: Canvas? = null
+    private var lastEncodeBmp: Bitmap? = null
     private val reusableBaos = ByteArrayOutputStream(256 * 1024)
 
     // Audio playback capture (Android 10+)
@@ -430,32 +432,35 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
             val rowPadding = rowStride - pixelStride * w
             val paddedWidth = w + rowPadding / pixelStride
 
-            var rawBmp = reusableRawBitmap
-            if (rawBmp == null || rawBmp.isRecycled || rawBmp.width != paddedWidth || rawBmp.height != h) {
-                rawBmp?.recycle()
-                rawBmp = Bitmap.createBitmap(paddedWidth, h, Bitmap.Config.ARGB_8888)
-                reusableRawBitmap = rawBmp
-            }
-            rawBmp.copyPixelsFromBuffer(buffer)
-
-            val encodeBmp = if (paddedWidth != w) {
-                var crop = reusableCropBitmap
-                if (crop == null || crop.isRecycled || crop.width != w || crop.height != h) {
-                    crop?.recycle()
-                    crop = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                    reusableCropBitmap = crop
-                    reusableCropCanvas = Canvas(crop)
+            val jpegBytes = synchronized(bitmapLock) {
+                var rawBmp = reusableRawBitmap
+                if (rawBmp == null || rawBmp.isRecycled || rawBmp.width != paddedWidth || rawBmp.height != h) {
+                    rawBmp?.recycle()
+                    rawBmp = Bitmap.createBitmap(paddedWidth, h, Bitmap.Config.ARGB_8888)
+                    reusableRawBitmap = rawBmp
                 }
-                val rect = Rect(0, 0, w, h)
-                reusableCropCanvas?.drawBitmap(rawBmp, rect, rect, null)
-                crop
-            } else {
-                rawBmp
-            }
+                rawBmp.copyPixelsFromBuffer(buffer)
 
-            reusableBaos.reset()
-            encodeBmp.compress(Bitmap.CompressFormat.JPEG, jpegQuality.coerceIn(25, 95), reusableBaos)
-            val jpegBytes = reusableBaos.toByteArray()
+                val encodeBmp = if (paddedWidth != w) {
+                    var crop = reusableCropBitmap
+                    if (crop == null || crop.isRecycled || crop.width != w || crop.height != h) {
+                        crop?.recycle()
+                        crop = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                        reusableCropBitmap = crop
+                        reusableCropCanvas = Canvas(crop)
+                    }
+                    val rect = Rect(0, 0, w, h)
+                    reusableCropCanvas?.drawBitmap(rawBmp, rect, rect, null)
+                    crop
+                } else {
+                    rawBmp
+                }
+                lastEncodeBmp = encodeBmp
+
+                reusableBaos.reset()
+                encodeBmp.compress(Bitmap.CompressFormat.JPEG, jpegQuality.coerceIn(25, 100), reusableBaos)
+                reusableBaos.toByteArray()
+            }
 
             val packet = LocalHttpServer.FramePacket(
                 jpegBytes = jpegBytes,
@@ -628,6 +633,20 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
     }
 
     override fun getLatestFrame(): LocalHttpServer.FramePacket? = latestFrame.get()
+
+    override fun getLatestFramePng(): ByteArray? {
+        return try {
+            synchronized(bitmapLock) {
+                val bmp = lastEncodeBmp
+                if (bmp == null || bmp.isRecycled) return null
+                val out = ByteArrayOutputStream(512 * 1024)
+                bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+                out.toByteArray()
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     override fun waitForNextFrame(lastSeq: Long, timeoutMs: Long): LocalHttpServer.FramePacket? {
         val current = latestFrame.get()
@@ -966,11 +985,14 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
         captureThread = null
         captureHandler = null
 
-        reusableCropCanvas = null
-        reusableRawBitmap?.recycle()
-        reusableRawBitmap = null
-        reusableCropBitmap?.recycle()
-        reusableCropBitmap = null
+        synchronized(bitmapLock) {
+            lastEncodeBmp = null
+            reusableCropCanvas = null
+            reusableRawBitmap?.recycle()
+            reusableRawBitmap = null
+            reusableCropBitmap?.recycle()
+            reusableCropBitmap = null
+        }
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()

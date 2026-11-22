@@ -6,7 +6,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 object ServiceState {
     const val DEFAULT_PORT = 3000
-    const val VERSION_NAME = "2.9.0"
+    const val VERSION_NAME = "3.1.0"
 
     data class ReceivedImage(
         val filePath: String,

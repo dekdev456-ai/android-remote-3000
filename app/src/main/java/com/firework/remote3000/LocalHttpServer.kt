@@ -34,6 +34,7 @@ class LocalHttpServer(
 
     interface ServerDelegate {
         fun getLatestFrame(): FramePacket?
+        fun getLatestFramePng(): ByteArray?
         fun waitForNextFrame(lastSeq: Long, timeoutMs: Long): FramePacket?
         fun getCaptureDimensions(): Pair<Int, Int>
         fun getTargetFps(): Int
@@ -428,6 +429,24 @@ class LocalHttpServer(
                         sendResponse(output, 200, "OK", "image/jpeg", frame.jpegBytes)
                     } else {
                         sendJson(output, 503, JSONObject().put("ok", false).put("error", "No frame yet"))
+                    }
+                }
+
+                method == "GET" && path == "/api/frame.png" -> {
+                    if (!isPinValid(pinParam)) {
+                        sendJson(output, 401, JSONObject().put("ok", false).put("error", "Invalid PIN"))
+                        return
+                    }
+                    val pngBytes = delegate.getLatestFramePng()
+                    if (pngBytes != null) {
+                        sendResponse(output, 200, "OK", "image/png", pngBytes)
+                    } else {
+                        val frame = delegate.getLatestFrame()
+                        if (frame != null) {
+                            sendResponse(output, 200, "OK", "image/jpeg", frame.jpegBytes)
+                        } else {
+                            sendJson(output, 503, JSONObject().put("ok", false).put("error", "No frame yet"))
+                        }
                     }
                 }
 
