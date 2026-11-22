@@ -46,6 +46,12 @@
             android:stopWithTask="false" />
 
         <service
+            android:name=".FloatingControlService"
+            android:enabled="true"
+            android:exported="false"
+            android:stopWithTask="false" />
+
+        <service
             android:name=".RemoteAccessibilityService"
             android:exported="false"
             android:label="@string/accessibility_service_label"

@@ -47,6 +47,10 @@ import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
+    companion object {
+        const val EXTRA_AUTO_START_SERVER = "com.firework.remote3000.EXTRA_AUTO_START_SERVER"
+    }
+
     private lateinit var tvStatusBadge: TextView
     private lateinit var tvLocalUrl: TextView
     private lateinit var tvLanUrl: TextView
@@ -246,12 +250,12 @@ class MainActivity : AppCompatActivity() {
         switchFloatingStop.setOnCheckedChangeListener { _, checked ->
             RemotePrefs.setShowFloatingStopButton(this, checked)
             if (checked && !Settings.canDrawOverlays(this)) {
-                Toast.makeText(this, "กรุณาอนุญาต 'แสดงทับแอปอื่น' เพื่อให้ปุ่มกลมปิดเซิร์ฟเวอร์ลอยทับทุกแอปได้", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "กรุณาอนุญาต 'แสดงทับแอปอื่น' เพื่อให้ปุ่มกลมเปิด/ปิดเซิร์ฟเวอร์ลอยทับทุกแอปได้", Toast.LENGTH_LONG).show()
                 startActivity(
                     Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
                 )
             } else {
-                ServiceState.onFloatingStopSettingChanged?.invoke(checked)
+                syncFloatingControlButton(checked)
             }
         }
 
@@ -292,6 +296,33 @@ class MainActivity : AppCompatActivity() {
         }
 
         observeState()
+        handleAutoStartIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleAutoStartIntent(intent)
+    }
+
+    private fun handleAutoStartIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_AUTO_START_SERVER, false) == true) {
+            intent.removeExtra(EXTRA_AUTO_START_SERVER)
+            if (!ServiceState.isRunning.value) {
+                startServerFlow()
+            }
+        }
+    }
+
+    private fun syncFloatingControlButton(show: Boolean) {
+        try {
+            if (show && !Settings.canDrawOverlays(this)) return
+            val i = Intent(this, FloatingControlService::class.java).apply {
+                action = if (show) FloatingControlService.ACTION_SHOW else FloatingControlService.ACTION_HIDE
+            }
+            startService(i)
+        } catch (_: Exception) {
+        }
     }
 
     private fun initBuddyTts() {
@@ -407,8 +438,8 @@ class MainActivity : AppCompatActivity() {
             tvAccStatus.setTextColor(ContextCompat.getColor(this, R.color.accent_red))
         }
         refreshBatteryStatus()
-        if (ServiceState.isRunning.value && ServiceState.showFloatingStopButton.value && Settings.canDrawOverlays(this)) {
-            ServiceState.onFloatingStopSettingChanged?.invoke(true)
+        if (ServiceState.showFloatingStopButton.value && Settings.canDrawOverlays(this)) {
+            syncFloatingControlButton(true)
         }
     }
 

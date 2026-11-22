@@ -210,6 +210,13 @@ class LocalHttpServer(
         broadcastJson(payload)
     }
 
+    fun broadcastServerStopped() {
+        val payload = JSONObject()
+            .put("type", "server_stopped")
+            .put("message", "เซิร์ฟเวอร์บนมือถือถูกปิดแล้ว")
+        broadcastJson(payload)
+    }
+
     private fun broadcastJson(json: JSONObject) {
         val text = json.toString()
         val dead = mutableListOf<WsClient>()

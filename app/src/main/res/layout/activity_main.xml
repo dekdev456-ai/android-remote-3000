@@ -318,7 +318,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="🔴 ปุ่มกลมลอยปิดเซิร์ฟเวอร์ด่วน (ลอยทับทุกแอป กดทีเดียวปิดเลย)"
+                    android:text="🔴🟢 ปุ่มกลมลอย เปิด/ปิด เซิร์ฟเวอร์ด่วน (ลอยทับทุกแอป)"
                     android:textColor="@color/text_main"
                     android:textSize="13sp"
                     android:textStyle="bold" />

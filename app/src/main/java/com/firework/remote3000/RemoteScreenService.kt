@@ -94,10 +94,6 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
     private var cpuWakeLock: PowerManager.WakeLock? = null
     private var keepAwakeLock: PowerManager.WakeLock? = null
 
-    // Draggable Floating Round Stop-Server Overlay Button (over all apps)
-    private var floatingStopView: View? = null
-    private var floatingStopParams: WindowManager.LayoutParams? = null
-
     // Reusable video buffers + Canvas (ZERO per-frame IntArray allocation -> smooth 60 FPS!)
     private val bitmapLock = Object()
     private var reusableRawBitmap: Bitmap? = null
@@ -336,11 +332,11 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
             ServiceState.onClientsChangedBroadcast = { server.broadcastClients() }
             ServiceState.onKeepAwakeChanged = { enabled -> updateKeepScreenAwake(enabled) }
             ServiceState.onFloatingStopSettingChanged = { show ->
-                if (show) showFloatingStopOverlay() else removeFloatingStopOverlay()
+                syncFloatingControlOverlay(show)
             }
             ServiceState.isRunning.value = true
             if (ServiceState.showFloatingStopButton.value) {
-                showFloatingStopOverlay()
+                syncFloatingControlOverlay(true)
             }
 
             val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
@@ -995,138 +991,14 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
         }
     }
 
-    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
-
-    @SuppressLint("ClickableViewAccessibility")
-    private fun showFloatingStopOverlay() {
-        mainHandler.post {
-            if (!ServiceState.isRunning.value || !ServiceState.showFloatingStopButton.value) return@post
-            if (!Settings.canDrawOverlays(this)) return@post
-            if (floatingStopView != null) return@post
-
-            try {
-                val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-                val btnSize = dp(56)
-
-                val circleBg = GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
-                    setColor(Color.parseColor("#E6EF4444"))
-                    setStroke(dp(2), Color.parseColor("#FFFFFF"))
-                }
-
-                val circleBox = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    gravity = Gravity.CENTER
-                    background = circleBg
-                    elevation = dp(8).toFloat()
-                    layoutParams = LinearLayout.LayoutParams(btnSize, btnSize)
-                }
-
-                val iconTv = TextView(this).apply {
-                    text = "⏻"
-                    setTextColor(Color.WHITE)
-                    textSize = 18f
-                    setTypeface(null, Typeface.BOLD)
-                    gravity = Gravity.CENTER
-                    includeFontPadding = false
-                }
-                val labelTv = TextView(this).apply {
-                    text = "ปิด"
-                    setTextColor(Color.WHITE)
-                    textSize = 9.5f
-                    setTypeface(null, Typeface.BOLD)
-                    gravity = Gravity.CENTER
-                    includeFontPadding = false
-                }
-                circleBox.addView(iconTv)
-                circleBox.addView(labelTv)
-
-                val params = WindowManager.LayoutParams(
-                    btnSize,
-                    btnSize,
-                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                    PixelFormat.TRANSLUCENT
-                ).apply {
-                    gravity = Gravity.TOP or Gravity.START
-                    x = (resources.displayMetrics.widthPixels - btnSize - dp(12)).coerceAtLeast(dp(12))
-                    y = dp(140)
-                }
-
-                var downX = 0f
-                var downY = 0f
-                var initX = 0
-                var initY = 0
-                var dragged = false
-
-                circleBox.setOnTouchListener { v, event ->
-                    when (event.action) {
-                        MotionEvent.ACTION_DOWN -> {
-                            downX = event.rawX
-                            downY = event.rawY
-                            initX = params.x
-                            initY = params.y
-                            dragged = false
-                            v.scaleX = 0.90f
-                            v.scaleY = 0.90f
-                            true
-                        }
-                        MotionEvent.ACTION_MOVE -> {
-                            val dx = (event.rawX - downX).toInt()
-                            val dy = (event.rawY - downY).toInt()
-                            if (abs(dx) > 10 || abs(dy) > 10) dragged = true
-                            if (dragged) {
-                                params.x = initX + dx
-                                params.y = initY + dy
-                                try {
-                                    wm.updateViewLayout(v, params)
-                                } catch (_: Exception) {
-                                }
-                            }
-                            true
-                        }
-                        MotionEvent.ACTION_UP -> {
-                            v.scaleX = 1.0f
-                            v.scaleY = 1.0f
-                            if (!dragged) {
-                                Toast.makeText(applicationContext, "⏹ ปิดเซิร์ฟเวอร์ :3000 เรียบร้อยแล้ว!", Toast.LENGTH_SHORT).show()
-                                stopAllAndSelf()
-                            }
-                            true
-                        }
-                        MotionEvent.ACTION_CANCEL -> {
-                            v.scaleX = 1.0f
-                            v.scaleY = 1.0f
-                            true
-                        }
-                        else -> false
-                    }
-                }
-
-                wm.addView(circleBox, params)
-                floatingStopView = circleBox
-                floatingStopParams = params
-            } catch (_: Exception) {
+    private fun syncFloatingControlOverlay(show: Boolean) {
+        try {
+            if (show && !Settings.canDrawOverlays(this)) return
+            val i = Intent(this, FloatingControlService::class.java).apply {
+                action = if (show) FloatingControlService.ACTION_SHOW else FloatingControlService.ACTION_HIDE
             }
-        }
-    }
-
-    private fun removeFloatingStopOverlay() {
-        val removeAction = {
-            try {
-                floatingStopView?.let { v ->
-                    val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-                    wm.removeView(v)
-                }
-            } catch (_: Exception) {
-            }
-            floatingStopView = null
-            floatingStopParams = null
-        }
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            removeAction()
-        } else {
-            mainHandler.post(removeAction)
+            startService(i)
+        } catch (_: Exception) {
         }
     }
 
@@ -1135,7 +1007,11 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
         ServiceState.onClientsChangedBroadcast = null
         ServiceState.onKeepAwakeChanged = null
         ServiceState.onFloatingStopSettingChanged = null
-        removeFloatingStopOverlay()
+        // Notify all connected PC/Mac browsers IMMEDIATELY so screen image clears instead of freezing!
+        try {
+            httpServer?.broadcastServerStopped()
+        } catch (_: Exception) {
+        }
         stopCaptureOnly()
         releaseWakeLocks()
         try {
@@ -1158,7 +1034,10 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
         ServiceState.onClientsChangedBroadcast = null
         ServiceState.onKeepAwakeChanged = null
         ServiceState.onFloatingStopSettingChanged = null
-        removeFloatingStopOverlay()
+        try {
+            httpServer?.broadcastServerStopped()
+        } catch (_: Exception) {
+        }
         stopCaptureOnly()
         releaseWakeLocks()
         httpServer?.stop()

@@ -243,6 +243,18 @@
     min-height: 44px; user-select: text;
   }
   .paste-box:focus { border-color: #25f4ee; background: #081529; box-shadow: 0 0 0 2px rgba(0,245,212,0.2); }
+  .offline-overlay {
+    position: absolute; inset: 0; background: #030712;
+    display: none; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 22px; z-index: 20; gap: 10px;
+  }
+  .offline-overlay.show { display: flex; }
+  .offline-icon {
+    width: 66px; height: 66px; border-radius: 50%;
+    background: rgba(239, 68, 68, 0.16); border: 2px solid #ef4444;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 28px; color: #f87171;
+  }
   .chat-meta { font-size: 9.5px; color: var(--dim); margin-bottom: 2px; }
 
   #pinOverlay {
@@ -288,6 +300,12 @@
         <div class="phone-speaker"></div>
         <div class="phone-screen-wrap" id="phoneFrame">
           <img id="screenImg" alt="Mobile Screen Stream" draggable="false" />
+          <div id="offlineOverlay" class="offline-overlay">
+            <div class="offline-icon">⏻</div>
+            <div id="offlineTitle" style="font-size:15px; font-weight:700; color:#f8fafc;">เซิร์ฟเวอร์บนมือถือถูกปิดแล้ว</div>
+            <div id="offlineSub" class="hint" style="max-width:240px;">หยุดแชร์หน้าจอเรียบร้อย (เคลียร์ภาพค้างออกแล้ว) — แตะปุ่มกลมสีเขียว <b>▶ เปิด</b> บนมือถือเพื่อเชื่อมต่อใหม่อัตโนมัติ</div>
+            <button class="btn primary" style="margin-top:4px;" onclick="reloadStream()">🔄 ลองเชื่อมต่อใหม่</button>
+          </div>
           <input id="realtimeKeyCatcher" type="text" autocomplete="off" spellcheck="false" />
         </div>
         <div class="phone-bottom-nav">
@@ -1607,7 +1625,55 @@
     }
   }
 
+  let reconnectPoller = null;
+
+  function showOfflineScreen(title, sub) {
+    // Immediately clear frozen MJPEG image so old frame NEVER stays stuck on screen!
+    img.style.visibility = 'hidden';
+    img.removeAttribute('src');
+    const ov = document.getElementById('offlineOverlay');
+    if (ov) ov.classList.add('show');
+    if (title) document.getElementById('offlineTitle').textContent = title;
+    if (sub) document.getElementById('offlineSub').innerHTML = sub;
+    const badge = document.getElementById('wsBadge');
+    if (badge) {
+      badge.textContent = '⏹ ปิดเซิร์ฟเวอร์แล้ว';
+      badge.className = 'pill danger';
+    }
+    stopPcAudioStream();
+    startReconnectPoller();
+  }
+
+  function hideOfflineScreen() {
+    if (reconnectPoller) { clearInterval(reconnectPoller); reconnectPoller = null; }
+    const ov = document.getElementById('offlineOverlay');
+    if (ov) ov.classList.remove('show');
+    img.style.visibility = 'visible';
+  }
+
+  function startReconnectPoller() {
+    if (reconnectPoller) return;
+    reconnectPoller = setInterval(async () => {
+      if (document.hidden) return;
+      try {
+        const r = await fetch('/api/info?t=' + Date.now(), { cache: 'no-store' });
+        if (r.ok) {
+          clearInterval(reconnectPoller);
+          reconnectPoller = null;
+          init();
+        }
+      } catch (_) {}
+    }, 2200);
+  }
+
+  img.addEventListener('error', () => {
+    if (img.getAttribute('src')) {
+      showOfflineScreen('เซิร์ฟเวอร์บนมือถือถูกปิดหรือตัดการเชื่อมต่อ', 'เคลียร์ภาพค้างออกแล้ว — กดปุ่มกลมสีเขียว <b>▶ เปิด</b> บนมือถือเพื่อกลับมาดูจออัตโนมัติ');
+    }
+  });
+
   function startConnectedSession() {
+    hideOfflineScreen();
     img.src = '/stream.mjpeg?pin=' + encodeURIComponent(currentPin) + '&t=' + Date.now();
     connectWebSocket();
     setLog('เชื่อมต่อ 60 FPS / 4K สำเร็จ');
@@ -1621,6 +1687,7 @@
     const badge = document.getElementById('wsBadge');
 
     ws.onopen = () => {
+      hideOfflineScreen();
       badge.textContent = '⚡ WS สด';
       badge.className = 'pill ok';
       pingTimer = setInterval(() => {
@@ -1631,7 +1698,10 @@
     ws.onmessage = (ev) => {
       try {
         const data = JSON.parse(ev.data);
-        if (data.type === 'pong') {
+        if (data.type === 'server_stopped') {
+          showOfflineScreen('เซิร์ฟเวอร์บนมือถือถูกปิดแล้ว', 'เคลียร์ภาพหน้าจอออกเรียบร้อย — แตะปุ่มกลมสีเขียว <b>▶ เปิด</b> บนมือถือเพื่อเชื่อมต่อใหม่อัตโนมัติ');
+          setLog('⏹ มือถือปิดเซิร์ฟเวอร์แล้ว');
+        } else if (data.type === 'pong') {
           if (data.t) document.getElementById('pingLbl').textContent = (Date.now() - data.t) + ' ms';
           updateLockAndControlUI(data.screenOn, data.locked, data.controlAllowed);
         } else if (data.type === 'clients') {
@@ -1655,9 +1725,8 @@
     };
 
     ws.onclose = () => {
-      badge.textContent = 'WS: เชื่อมใหม่...';
-      badge.className = 'pill warn';
-      setTimeout(() => { if (!document.hidden) connectWebSocket(); }, 2000);
+      if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
+      showOfflineScreen('เซิร์ฟเวอร์บนมือถือถูกปิดแล้ว', 'เคลียร์ภาพหน้าจอออกเรียบร้อย — แตะปุ่มกลมสีเขียว <b>▶ เปิด</b> บนมือถือเพื่อเชื่อมต่อใหม่อัตโนมัติ');
     };
   }
 
