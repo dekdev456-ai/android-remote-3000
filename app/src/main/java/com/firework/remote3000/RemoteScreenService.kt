@@ -9,6 +9,9 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -16,8 +19,11 @@ import android.content.pm.ServiceInfo
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.AudioAttributes
@@ -29,13 +35,21 @@ import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
+import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.provider.MediaStore
+import android.provider.Settings
 import android.util.DisplayMetrics
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
 import android.view.WindowManager
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -48,6 +62,7 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.math.abs
 
 class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
 
@@ -78,6 +93,10 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
     // Wake locks: PARTIAL keeps server alive while locked; optional screen lock keeps display awake
     private var cpuWakeLock: PowerManager.WakeLock? = null
     private var keepAwakeLock: PowerManager.WakeLock? = null
+
+    // Draggable Floating Round Stop-Server Overlay Button (over all apps)
+    private var floatingStopView: View? = null
+    private var floatingStopParams: WindowManager.LayoutParams? = null
 
     // Reusable video buffers + Canvas (ZERO per-frame IntArray allocation -> smooth 60 FPS!)
     private var reusableRawBitmap: Bitmap? = null
@@ -314,7 +333,13 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
             ServiceState.onNewChatBroadcast = { msg -> server.broadcastChat(msg) }
             ServiceState.onClientsChangedBroadcast = { server.broadcastClients() }
             ServiceState.onKeepAwakeChanged = { enabled -> updateKeepScreenAwake(enabled) }
+            ServiceState.onFloatingStopSettingChanged = { show ->
+                if (show) showFloatingStopOverlay() else removeFloatingStopOverlay()
+            }
             ServiceState.isRunning.value = true
+            if (ServiceState.showFloatingStopButton.value) {
+                showFloatingStopOverlay()
+            }
 
             val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             val projection = mpm.getMediaProjection(resultCode, resultData)
@@ -787,6 +812,98 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
         }
     }
 
+    override fun setPhoneClipboardImage(imageBytes: ByteArray, mimeType: String): Pair<Boolean, String> {
+        return try {
+            if (imageBytes.size < 64) return Pair(false, "ไฟล์รูปไม่ถูกต้อง")
+            val isJpeg = mimeType.contains("jpeg", true) || mimeType.contains("jpg", true)
+            val ext = if (isJpeg) "jpg" else "png"
+            val cleanMime = if (isJpeg) "image/jpeg" else "image/png"
+            val fileName = "PC_Clip_${System.currentTimeMillis()}.$ext"
+
+            // 1. Save to FileProvider cache & put URI into Android System Clipboard!
+            val clipDir = File(cacheDir, "clipboard").apply { mkdirs() }
+            clipDir.listFiles()?.sortedByDescending { it.lastModified() }?.drop(5)?.forEach {
+                try { it.delete() } catch (_: Exception) {}
+            }
+            val clipFile = File(clipDir, fileName)
+            clipFile.writeBytes(imageBytes)
+
+            ServiceState.latestReceivedImage.value = ServiceState.ReceivedImage(
+                filePath = clipFile.absolutePath,
+                fileName = fileName,
+                mimeType = cleanMime,
+                sizeBytes = imageBytes.size.toLong(),
+                timeMs = System.currentTimeMillis()
+            )
+
+            val clipUri = FileProvider.getUriForFile(this, "$packageName.fileprovider", clipFile)
+
+            // 2. Also save into Android Gallery (Pictures/RemoteScreen3000) so TikTok/LINE/Huawei Gallery sees it!
+            var savedGalleryUri: android.net.Uri? = null
+            try {
+                val values = ContentValues().apply {
+                    put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+                    put(MediaStore.Images.Media.MIME_TYPE, cleanMime)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/RemoteScreen3000")
+                        put(MediaStore.Images.Media.IS_PENDING, 1)
+                    }
+                }
+                val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                if (uri != null) {
+                    contentResolver.openOutputStream(uri)?.use { out ->
+                        out.write(imageBytes)
+                        out.flush()
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        val done = ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }
+                        contentResolver.update(uri, done, null, null)
+                    }
+                    savedGalleryUri = uri
+                }
+            } catch (_: Exception) {
+            }
+
+            val finalUri = savedGalleryUri ?: clipUri
+            mainHandler.post {
+                try {
+                    val cb = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    val clip = ClipData.newUri(contentResolver, "PC Image", finalUri)
+                    cb.setPrimaryClip(clip)
+                    Toast.makeText(applicationContext, "🖼️ ได้รับภาพจากคอมแล้ว! (ลง Clipboard + แกลเลอรี)", Toast.LENGTH_LONG).show()
+                } catch (_: Exception) {
+                }
+            }
+
+            // Show notification on phone so user can tap to open & download to Gallery anytime
+            val openIntent = PendingIntent.getActivity(
+                this,
+                4,
+                Intent(this, MainActivity::class.java),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            val imgNotif = NotificationCompat.Builder(this, CHAT_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle("🖼️ ได้รับรูปภาพจากคอมพิวเตอร์")
+                .setContentText("$fileName — แตะเพื่อดูหรือกดดาวน์โหลดลง Gallery")
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .setContentIntent(openIntent)
+                .build()
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.notify(3005, imgNotif)
+
+            val msg = if (savedGalleryUri != null) {
+                "ส่งรูปไปมือถือแล้ว! (ลง Clipboard + Gallery และกดโหลดเพิ่มในแอปมือถือได้)"
+            } else {
+                "ส่งรูปไปมือถือแล้ว! (ลง Clipboard และกดปุ่ม 'ดาวน์โหลดลง Gallery' บนมือถือได้)"
+            }
+            Pair(true, msg)
+        } catch (e: Exception) {
+            Pair(false, "ส่งรูปไม่สำเร็จ: ${e.message}")
+        }
+    }
+
     override fun installApkBytes(apkBytes: ByteArray): Pair<Boolean, String> {
         return try {
             if (apkBytes.size < 10_000) {
@@ -856,10 +973,147 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
         reusableCropBitmap = null
     }
 
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun showFloatingStopOverlay() {
+        mainHandler.post {
+            if (!ServiceState.isRunning.value || !ServiceState.showFloatingStopButton.value) return@post
+            if (!Settings.canDrawOverlays(this)) return@post
+            if (floatingStopView != null) return@post
+
+            try {
+                val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                val btnSize = dp(56)
+
+                val circleBg = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.parseColor("#E6EF4444"))
+                    setStroke(dp(2), Color.parseColor("#FFFFFF"))
+                }
+
+                val circleBox = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER
+                    background = circleBg
+                    elevation = dp(8).toFloat()
+                    layoutParams = LinearLayout.LayoutParams(btnSize, btnSize)
+                }
+
+                val iconTv = TextView(this).apply {
+                    text = "⏻"
+                    setTextColor(Color.WHITE)
+                    textSize = 18f
+                    setTypeface(null, Typeface.BOLD)
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                }
+                val labelTv = TextView(this).apply {
+                    text = "ปิด"
+                    setTextColor(Color.WHITE)
+                    textSize = 9.5f
+                    setTypeface(null, Typeface.BOLD)
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                }
+                circleBox.addView(iconTv)
+                circleBox.addView(labelTv)
+
+                val params = WindowManager.LayoutParams(
+                    btnSize,
+                    btnSize,
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                    PixelFormat.TRANSLUCENT
+                ).apply {
+                    gravity = Gravity.TOP or Gravity.START
+                    x = (resources.displayMetrics.widthPixels - btnSize - dp(12)).coerceAtLeast(dp(12))
+                    y = dp(140)
+                }
+
+                var downX = 0f
+                var downY = 0f
+                var initX = 0
+                var initY = 0
+                var dragged = false
+
+                circleBox.setOnTouchListener { v, event ->
+                    when (event.action) {
+                        MotionEvent.ACTION_DOWN -> {
+                            downX = event.rawX
+                            downY = event.rawY
+                            initX = params.x
+                            initY = params.y
+                            dragged = false
+                            v.scaleX = 0.90f
+                            v.scaleY = 0.90f
+                            true
+                        }
+                        MotionEvent.ACTION_MOVE -> {
+                            val dx = (event.rawX - downX).toInt()
+                            val dy = (event.rawY - downY).toInt()
+                            if (abs(dx) > 10 || abs(dy) > 10) dragged = true
+                            if (dragged) {
+                                params.x = initX + dx
+                                params.y = initY + dy
+                                try {
+                                    wm.updateViewLayout(v, params)
+                                } catch (_: Exception) {
+                                }
+                            }
+                            true
+                        }
+                        MotionEvent.ACTION_UP -> {
+                            v.scaleX = 1.0f
+                            v.scaleY = 1.0f
+                            if (!dragged) {
+                                Toast.makeText(applicationContext, "⏹ ปิดเซิร์ฟเวอร์ :3000 เรียบร้อยแล้ว!", Toast.LENGTH_SHORT).show()
+                                stopAllAndSelf()
+                            }
+                            true
+                        }
+                        MotionEvent.ACTION_CANCEL -> {
+                            v.scaleX = 1.0f
+                            v.scaleY = 1.0f
+                            true
+                        }
+                        else -> false
+                    }
+                }
+
+                wm.addView(circleBox, params)
+                floatingStopView = circleBox
+                floatingStopParams = params
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun removeFloatingStopOverlay() {
+        val removeAction = {
+            try {
+                floatingStopView?.let { v ->
+                    val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                    wm.removeView(v)
+                }
+            } catch (_: Exception) {
+            }
+            floatingStopView = null
+            floatingStopParams = null
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            removeAction()
+        } else {
+            mainHandler.post(removeAction)
+        }
+    }
+
     private fun stopAllAndSelf() {
         ServiceState.onNewChatBroadcast = null
         ServiceState.onClientsChangedBroadcast = null
         ServiceState.onKeepAwakeChanged = null
+        ServiceState.onFloatingStopSettingChanged = null
+        removeFloatingStopOverlay()
         stopCaptureOnly()
         releaseWakeLocks()
         try {
@@ -881,6 +1135,8 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
         ServiceState.onNewChatBroadcast = null
         ServiceState.onClientsChangedBroadcast = null
         ServiceState.onKeepAwakeChanged = null
+        ServiceState.onFloatingStopSettingChanged = null
+        removeFloatingStopOverlay()
         stopCaptureOnly()
         releaseWakeLocks()
         httpServer?.stop()

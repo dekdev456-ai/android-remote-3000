@@ -218,6 +218,14 @@ class RemoteAccessibilityService : AccessibilityService() {
         return setTextAndMoveCursorToEnd(focused, current + text)
     }
 
+    fun triggerNativePaste(): Boolean {
+        val focused = findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            ?: rootInActiveWindow?.let { findEditableNode(it) }
+            ?: return false
+        focused.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        return focused.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+    }
+
     // ================= TIKTOK / ACTIVE APP CHAT BRIDGE =================
 
     fun clearCapturedChat() {
@@ -277,45 +285,112 @@ class RemoteAccessibilityService : AccessibilityService() {
         val root = rootInActiveWindow
         val pkg = root?.packageName?.toString() ?: ""
         val isTikTok = pkg.contains("trill", true) || pkg.contains("musically", true) || pkg.contains("tiktok", true)
+
+        // Strict TikTok-only guard: never scrape Home Screen, Settings, or any other app!
+        if (!isTikTok || root == null) {
+            return JSONObject()
+                .put("ok", false)
+                .put("isTikTok", false)
+                .put("packageName", pkg)
+                .put("error", "ดึงได้เฉพาะบนแอป TikTok เท่านั้น — กรุณาเปิดห้องแชทใน TikTok บนมือถือก่อน")
+        }
+
         val (screenW, screenH) = getScreenBounds()
 
-        val visibleItems = mutableListOf<Triple<Int, String, String>>() // (y, side, text)
-        var roomTitle = ""
-
-        if (root != null) {
-            val ignoreSet = setOf(
-                "ส่งข้อความ...", "message...", "send a message...", "send", "ส่ง",
-                "back", "ย้อนกลับ", "more", "เพิ่มเติม", "emoji", "sticker", "camera"
-            )
-            fun walk(node: AccessibilityNodeInfo?) {
-                if (node == null || !node.isVisibleToUser) return
-                val isEdit = node.isEditable || (node.className?.toString()?.contains("EditText", true) == true)
-                if (!isEdit) {
-                    val txt = node.text?.toString()?.trim().orEmpty()
-                    if (txt.isNotEmpty() && txt.length <= 600 && !ignoreSet.contains(txt.lowercase())) {
-                        val rect = Rect()
-                        node.getBoundsInScreen(rect)
-                        if (rect.top in 1 until (screenH * 0.88).toInt()) {
-                            if (rect.top < (screenH * 0.14).toInt() && roomTitle.isEmpty()) {
-                                roomTitle = txt
-                            } else if (rect.top >= (screenH * 0.12).toInt()) {
-                                val centerRatio = rect.centerX().toFloat() / screenW.toFloat()
-                                val side = when {
-                                    centerRatio > 0.56f -> "me"
-                                    centerRatio < 0.44f -> "them"
-                                    else -> "meta"
-                                }
-                                visibleItems.add(Triple(rect.top, side, txt))
-                            }
-                        }
-                    }
-                }
-                for (i in 0 until node.childCount) {
-                    walk(node.getChild(i))
+        // Find TikTok's exact chat message list RecyclerView (excludes top bar, menus, bottom tabs & input bar!)
+        var chatContainer: AccessibilityNodeInfo? = null
+        var bestContainerArea = 0
+        fun findChatList(node: AccessibilityNodeInfo?) {
+            if (node == null || !node.isVisibleToUser) return
+            val cls = node.className?.toString().orEmpty()
+            if (cls.contains("RecyclerView", true) || cls.contains("ListView", true)) {
+                val r = Rect()
+                node.getBoundsInScreen(r)
+                val area = r.width() * r.height()
+                if (r.height() > (screenH * 0.35).toInt() && r.width() > (screenW * 0.75).toInt() && area > bestContainerArea) {
+                    bestContainerArea = area
+                    chatContainer = node
                 }
             }
-            walk(root)
+            for (i in 0 until node.childCount) findChatList(node.getChild(i))
         }
+        findChatList(root)
+
+        val containerRect = Rect()
+        if (chatContainer != null) {
+            chatContainer!!.getBoundsInScreen(containerRect)
+        } else {
+            // Safe fallback strictly inside middle chat band (excludes top header & bottom bar)
+            containerRect.set(0, (screenH * 0.13).toInt(), screenW, (screenH * 0.86).toInt())
+        }
+
+        val chatTopRatio = (containerRect.top.toFloat() / screenH.toFloat()).coerceIn(0.08f, 0.35f)
+        val chatBottomRatio = (containerRect.bottom.toFloat() / screenH.toFloat()).coerceIn(0.55f, 0.92f)
+
+        val visibleItems = mutableListOf<Triple<Int, String, String>>() // (y, side, text)
+
+        val menuIgnoreSet = setOf(
+            "ส่งข้อความ...", "message...", "send a message...", "send", "ส่ง",
+            "back", "ย้อนกลับ", "more", "เพิ่มเติม", "emoji", "sticker", "สติกเกอร์",
+            "camera", "กล้อง", "หน้าหลัก", "home", "เพื่อน", "friends", "กล่องข้อความ",
+            "inbox", "โปรไฟล์", "profile", "ร้านค้า", "shop", "ค้นหา", "search",
+            "กำลังใช้งาน", "active now", "ใช้งานเมื่อสักครู่", "ดูทั้งหมด", "รายงาน",
+            "วิดีโอคอล", "โทร", "เมนู", "menu", "ติดตาม", "follow", "กำลังติดตาม",
+            "following", "ถูกใจ", "like", "แชร์", "share", "บันทึก", "save",
+            "ตอบกลับ", "reply", "ส่งต่อ", "forward", "ลบ", "delete", "คัดลอก", "copy"
+        )
+
+        val walkRoot = chatContainer ?: root
+        fun walkChatOnly(node: AccessibilityNodeInfo?) {
+            if (node == null || !node.isVisibleToUser) return
+            val cls = node.className?.toString().orEmpty()
+            // Skip EditText and navigation/menu Buttons completely
+            if (node.isEditable || cls.contains("EditText", true) || cls.contains("Button", true)) return
+
+            val r = Rect()
+            node.getBoundsInScreen(r)
+            val strictlyInsideChat = r.top >= containerRect.top && r.bottom <= containerRect.bottom && r.height() > 0
+
+            if (strictlyInsideChat) {
+                val txt = node.text?.toString()?.trim().orEmpty()
+                val desc = node.contentDescription?.toString()?.trim().orEmpty()
+
+                if (txt.isNotEmpty() && txt.length <= 600 && !menuIgnoreSet.contains(txt.lowercase())) {
+                    // Exclude tiny profile initials / single icon glyphs at far edges
+                    val isLikelyChatText = r.left > (screenW * 0.08).toInt() && r.right < (screenW * 0.96).toInt()
+                    if (isLikelyChatText) {
+                        val centerRatio = r.centerX().toFloat() / screenW.toFloat()
+                        val side = when {
+                            centerRatio > 0.56f -> "me"
+                            centerRatio < 0.44f -> "them"
+                            else -> "meta"
+                        }
+                        visibleItems.add(Triple(r.top, side, txt))
+                    }
+                } else if (cls.contains("Image", true)) {
+                    // Only capture real TikTok Stickers / Chat Photos / Shared Videos (ignore small circular avatars <= 130px!)
+                    val isAvatarLeft = r.left < (screenW * 0.14).toInt() && r.width() < (screenW * 0.16).toInt()
+                    val isBigStickerOrMedia = !isAvatarLeft && r.width() >= (screenW * 0.18).toInt() && r.height() >= (screenW * 0.18).toInt()
+                    if (isBigStickerOrMedia) {
+                        val centerRatio = r.centerX().toFloat() / screenW.toFloat()
+                        val side = when {
+                            centerRatio > 0.55f -> "me"
+                            centerRatio < 0.45f -> "them"
+                            else -> "meta"
+                        }
+                        val label = when {
+                            desc.contains("sticker", true) || desc.contains("สติกเกอร์", true) -> "🎨 [สติกเกอร์ TikTok]"
+                            desc.contains("video", true) || desc.contains("วิดีโอ", true) -> "🎬 [วิดีโอ TikTok]"
+                            else -> "🎨 [สติกเกอร์ / รูปภาพ]"
+                        }
+                        visibleItems.add(Triple(r.top, side, label))
+                    }
+                }
+            }
+
+            for (i in 0 until node.childCount) walkChatOnly(node.getChild(i))
+        }
+        walkChatOnly(walkRoot)
 
         visibleItems.sortBy { it.first }
         for ((_, side, txt) in visibleItems) {
@@ -339,8 +414,10 @@ class RemoteAccessibilityService : AccessibilityService() {
         return JSONObject()
             .put("ok", true)
             .put("packageName", pkg)
-            .put("isTikTok", isTikTok)
-            .put("roomTitle", roomTitle.ifEmpty { if (isTikTok) "TikTok" else pkg })
+            .put("isTikTok", true)
+            .put("roomTitle", "TikTok Chat")
+            .put("chatTopRatio", chatTopRatio.toDouble())
+            .put("chatBottomRatio", chatBottomRatio.toDouble())
             .put("visibleCount", visibleItems.size)
             .put("totalCount", arr.length())
             .put("messages", arr)

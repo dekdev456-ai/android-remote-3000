@@ -4,21 +4,28 @@ import android.Manifest
 import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
+import android.graphics.BitmapFactory
+import android.media.MediaScannerConnection
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.PowerManager
+import android.provider.MediaStore
 import android.provider.Settings
 import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.view.View
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -57,6 +64,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var switchPin: SwitchMaterial
     private lateinit var switchAllowControl: SwitchMaterial
     private lateinit var switchKeepAwake: SwitchMaterial
+    private lateinit var switchFloatingStop: SwitchMaterial
     private lateinit var btnToggleServer: Button
     private lateinit var btnCopyLan: Button
     private lateinit var btnRefreshIp: Button
@@ -65,6 +73,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvBatteryStatus: TextView
     private lateinit var btnIgnoreBattery: Button
     private lateinit var btnAppSettings: Button
+    private lateinit var ivReceivedImage: ImageView
+    private lateinit var tvReceivedImageInfo: TextView
+    private lateinit var btnSaveToGallery: Button
+    private lateinit var btnCopyImageClip: Button
 
     // Companion Buddy UI
     private lateinit var buddyView: BuddyView
@@ -111,6 +123,12 @@ class MainActivity : AppCompatActivity() {
                 putExtra(RemoteScreenService.EXTRA_PORT, ServiceState.DEFAULT_PORT)
             }
             ContextCompat.startForegroundService(this, svcIntent)
+            if (ServiceState.showFloatingStopButton.value && !Settings.canDrawOverlays(this)) {
+                Toast.makeText(this, "กรุณาอนุญาต 'แสดงทับแอปอื่น' เพื่อให้ปุ่มกลมปิดเซิร์ฟเวอร์ลอยบนหน้าจอได้", Toast.LENGTH_LONG).show()
+                startActivity(
+                    Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
+                )
+            }
         } else {
             Toast.makeText(this, "ยกเลิกการแชร์หน้าจอ", Toast.LENGTH_SHORT).show()
         }
@@ -137,6 +155,7 @@ class MainActivity : AppCompatActivity() {
         switchPin = findViewById(R.id.switchPin)
         switchAllowControl = findViewById(R.id.switchAllowControl)
         switchKeepAwake = findViewById(R.id.switchKeepAwake)
+        switchFloatingStop = findViewById(R.id.switchFloatingStop)
         btnToggleServer = findViewById(R.id.btnToggleServer)
         btnCopyLan = findViewById(R.id.btnCopyLan)
         btnRefreshIp = findViewById(R.id.btnRefreshIp)
@@ -145,6 +164,17 @@ class MainActivity : AppCompatActivity() {
         tvBatteryStatus = findViewById(R.id.tvBatteryStatus)
         btnIgnoreBattery = findViewById(R.id.btnIgnoreBattery)
         btnAppSettings = findViewById(R.id.btnAppSettings)
+        ivReceivedImage = findViewById(R.id.ivReceivedImage)
+        tvReceivedImageInfo = findViewById(R.id.tvReceivedImageInfo)
+        btnSaveToGallery = findViewById(R.id.btnSaveToGallery)
+        btnCopyImageClip = findViewById(R.id.btnCopyImageClip)
+
+        btnSaveToGallery.setOnClickListener {
+            saveLatestImageToGallery()
+        }
+        btnCopyImageClip.setOnClickListener {
+            copyLatestImageToClipboard()
+        }
 
         // Load persistent saved settings so closing & reopening NEVER turns off control or resets PIN
         RemotePrefs.loadIntoState(this)
@@ -167,6 +197,7 @@ class MainActivity : AppCompatActivity() {
         switchPin.isChecked = ServiceState.pinRequired.value
         switchAllowControl.isChecked = ServiceState.controlAllowed.value
         switchKeepAwake.isChecked = ServiceState.keepScreenAwake.value
+        switchFloatingStop.isChecked = ServiceState.showFloatingStopButton.value
 
         btnToggleServer.setOnClickListener {
             if (ServiceState.isRunning.value) {
@@ -210,6 +241,18 @@ class MainActivity : AppCompatActivity() {
         switchKeepAwake.setOnCheckedChangeListener { _, checked ->
             RemotePrefs.setKeepAwake(this, checked)
             ServiceState.onKeepAwakeChanged?.invoke(checked)
+        }
+
+        switchFloatingStop.setOnCheckedChangeListener { _, checked ->
+            RemotePrefs.setShowFloatingStopButton(this, checked)
+            if (checked && !Settings.canDrawOverlays(this)) {
+                Toast.makeText(this, "กรุณาอนุญาต 'แสดงทับแอปอื่น' เพื่อให้ปุ่มกลมปิดเซิร์ฟเวอร์ลอยทับทุกแอปได้", Toast.LENGTH_LONG).show()
+                startActivity(
+                    Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
+                )
+            } else {
+                ServiceState.onFloatingStopSettingChanged?.invoke(checked)
+            }
         }
 
         btnOpenAccessibility.setOnClickListener {
@@ -364,6 +407,9 @@ class MainActivity : AppCompatActivity() {
             tvAccStatus.setTextColor(ContextCompat.getColor(this, R.color.accent_red))
         }
         refreshBatteryStatus()
+        if (ServiceState.isRunning.value && ServiceState.showFloatingStopButton.value && Settings.canDrawOverlays(this)) {
+            ServiceState.onFloatingStopSettingChanged?.invoke(true)
+        }
     }
 
     private fun refreshBatteryStatus() {
@@ -575,6 +621,83 @@ class MainActivity : AppCompatActivity() {
                     "✨ เปิดคู่หูลอยทับทุกแอป (TikTok / เกม / ทุกหน้า)"
                 }
             }
+        }
+
+        lifecycleScope.launch {
+            ServiceState.latestReceivedImage.collect { rec ->
+                if (rec == null || !File(rec.filePath).exists()) {
+                    ivReceivedImage.visibility = View.GONE
+                    tvReceivedImageInfo.text = "ยังไม่มีรูปภาพที่ส่งมาจากคอม (กด Ctrl+V หรือเลือกไฟล์รูปบนเว็บคอมได้เลย)"
+                    btnSaveToGallery.isEnabled = false
+                    btnCopyImageClip.isEnabled = false
+                } else {
+                    val bmp = BitmapFactory.decodeFile(rec.filePath)
+                    if (bmp != null) {
+                        ivReceivedImage.setImageBitmap(bmp)
+                        ivReceivedImage.visibility = View.VISIBLE
+                    }
+                    val kb = (rec.sizeBytes / 1024).coerceAtLeast(1)
+                    tvReceivedImageInfo.text = "✅ ได้รับรูป: ${rec.fileName} (${kb} KB) • กดดาวน์โหลดลง Gallery ได้เลย!"
+                    btnSaveToGallery.isEnabled = true
+                    btnCopyImageClip.isEnabled = true
+                }
+            }
+        }
+    }
+
+    private fun saveLatestImageToGallery() {
+        val rec = ServiceState.latestReceivedImage.value ?: return
+        val file = File(rec.filePath)
+        if (!file.exists()) {
+            Toast.makeText(this, "ไม่พบไฟล์รูปภาพ", Toast.LENGTH_SHORT).show()
+            return
+        }
+        try {
+            val bytes = file.readBytes()
+            val outName = "RemotePC_${System.currentTimeMillis()}.${if (rec.mimeType.contains("jpeg")) "jpg" else "png"}"
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, outName)
+                put(MediaStore.Images.Media.MIME_TYPE, rec.mimeType)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/RemoteScreen3000")
+                    put(MediaStore.Images.Media.IS_PENDING, 1)
+                }
+            }
+            val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            if (uri != null) {
+                contentResolver.openOutputStream(uri)?.use { out ->
+                    out.write(bytes)
+                    out.flush()
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val done = ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }
+                    contentResolver.update(uri, done, null, null)
+                }
+                Toast.makeText(this, "✅ ดาวน์โหลดลง Gallery แล้ว! (Pictures/RemoteScreen3000)", Toast.LENGTH_LONG).show()
+            } else {
+                // Legacy fallback for older Android
+                val picDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "RemoteScreen3000").apply { mkdirs() }
+                val dest = File(picDir, outName)
+                dest.writeBytes(bytes)
+                MediaScannerConnection.scanFile(this, arrayOf(dest.absolutePath), arrayOf(rec.mimeType), null)
+                Toast.makeText(this, "✅ ดาวน์โหลดลง Gallery แล้ว!", Toast.LENGTH_LONG).show()
+            }
+        } catch (e: Exception) {
+            Toast.makeText(this, "บันทึกลง Gallery ไม่สำเร็จ: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun copyLatestImageToClipboard() {
+        val rec = ServiceState.latestReceivedImage.value ?: return
+        val file = File(rec.filePath)
+        if (!file.exists()) return
+        try {
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+            val cb = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cb.setPrimaryClip(ClipData.newUri(contentResolver, "PC Image", uri))
+            Toast.makeText(this, "📋 คัดลอกรูปลง Clipboard มือถือแล้ว!", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "คัดลอกไม่สำเร็จ: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 

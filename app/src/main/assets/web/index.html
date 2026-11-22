@@ -184,11 +184,38 @@
     margin-bottom: 6px; user-select: text;
   }
   .chat-msg {
-    max-width: 88%; padding: 5px 8px; border-radius: 9px;
-    font-size: 11.5px; line-height: 1.35; word-break: break-word;
+    max-width: 88%; padding: 6px 10px; border-radius: 16px;
+    font-size: 11.5px; line-height: 1.38; word-break: break-word;
   }
   .chat-msg.pc { align-self: flex-end; background: rgba(2, 132, 199, 0.35); border: 1px solid rgba(56, 189, 248, 0.45); }
   .chat-msg.phone { align-self: flex-start; background: rgba(16, 185, 129, 0.22); border: 1px solid rgba(16, 185, 129, 0.45); }
+  /* Authentic TikTok DM Style Bubbles */
+  .tt-bubble-me {
+    align-self: flex-end;
+    background: linear-gradient(135deg, #20d5ec, #0ea5e9);
+    color: #04101f; font-weight: 600;
+    border-radius: 18px 18px 4px 18px;
+    padding: 7px 11px; max-width: 84%; font-size: 12px;
+    box-shadow: 0 3px 10px rgba(32, 213, 236, 0.25);
+  }
+  .tt-bubble-them {
+    align-self: flex-start;
+    background: #232733; color: #f8fafc;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 18px 18px 18px 4px;
+    padding: 7px 11px; max-width: 84%; font-size: 12px;
+  }
+  .tt-bubble-meta {
+    align-self: center; font-size: 10px; color: #94a3b8;
+    background: rgba(148,163,184,0.12); padding: 2px 9px; border-radius: 999px;
+  }
+  .tt-capture-strip {
+    max-height: 240px; overflow-y: auto; background: #000;
+    border: 1px solid rgba(255, 42, 109, 0.4); border-radius: 10px;
+    margin-bottom: 6px; display: none; flex-direction: column; align-items: center;
+  }
+  .tt-capture-strip.show { display: flex; }
+  .tt-capture-strip img { width: 100%; display: block; border-bottom: 1px dashed rgba(255,255,255,0.12); }
   .chat-meta { font-size: 9.5px; color: var(--dim); margin-bottom: 2px; }
 
   #pinOverlay {
@@ -257,31 +284,66 @@
 
   <!-- Right Control Sidebar -->
   <div class="sidebar">
-    <!-- TikTok Chat Bridge (Room 67 + Send Directly from PC) -->
-    <div class="card" style="border-color: rgba(255, 42, 109, 0.45);">
+    <!-- TikTok Chat Bridge + Auto Full-Screen Scroll & Capture (Stickers + Real TikTok Bubbles!) -->
+    <div class="card" style="border-color: rgba(255, 42, 109, 0.55);">
       <h3 style="color:#ff6b9d;">
-        🎵 แชท TikTok (ห้อง 67) • ดึง &amp; ส่งสด
+        🎵 แชท TikTok (ห้อง 67) • แคปสติกเกอร์+บับเบิลครบ
         <label style="font-size:10.5px; color:var(--dim); display:flex; align-items:center; gap:4px; cursor:pointer;">
           <input type="checkbox" id="chkTikTokAuto" onchange="toggleTikTokAuto(this.checked)" style="accent-color:#ff2a6d;" /> ซิงก์สด
         </label>
       </h3>
-      <div style="display:flex; gap:4px; flex-wrap:wrap; margin-bottom:6px;">
+      <div style="display:flex; gap:4px; flex-wrap:wrap; margin-bottom:5px;">
         <button class="btn" onclick="sendCmd({type:'tiktok_open'})">🎵 เปิด TikTok</button>
         <button class="btn" onclick="sendCmd({type:'tiktok_find_chat', keyword: document.getElementById('ttRoomKw').value || '67'})">🔎 เข้าห้อง</button>
-        <input type="text" id="ttRoomKw" value="67" style="width:52px; padding:4px 6px; text-align:center;" title="ชื่อห้องแชท TikTok" />
-        <button class="btn primary" onclick="fetchTikTokChat()">🔄 ดึงแชท</button>
-        <button class="btn" onclick="scrollAndFetchTikTok()">📜 ดึงย้อนหลัง</button>
+        <input type="text" id="ttRoomKw" value="67" style="width:48px; padding:4px 6px; text-align:center;" title="ชื่อห้องแชท TikTok" />
+        <button class="btn" onclick="fetchTikTokChat()">🔄 ดึงข้อความ</button>
         <button class="btn" onclick="copyAllTikTokChat()" title="คัดลอกข้อความทั้งหมด">📋</button>
-        <button class="btn" onclick="sendCmd({type:'tiktok_clear_cache'}); setTimeout(fetchTikTokChat, 200)" title="ล้างรายการที่เก็บ">🧹</button>
+        <button class="btn" onclick="clearAllTikTokCapture()" title="ล้างที่บันทึก">🧹</button>
       </div>
-      <div id="ttMeta" class="hint" style="margin-bottom:4px;">เปิดห้องแชท "67" ใน TikTok บนมือถือ แล้วกด 🔄 ดึงแชท หรือเปิด ⚡ ซิงก์สด</div>
-      <div class="chat-box" id="ttChatBox" style="height:155px;">
+
+      <!-- Auto Scroll Top -> Bottom & Full Visual Capture Controls -->
+      <div style="display:flex; gap:4px; flex-wrap:wrap; margin-bottom:6px;">
+        <button class="btn primary" id="btnAutoCapAll" style="flex:1; background:linear-gradient(135deg,#fe2c55,#25f4ee); color:#04101f;" onclick="startAutoCaptureFullChat()">📸 แคปออโต้ทั้งห้อง (บนสุด→ล่างสุด)</button>
+        <button class="btn" id="btnStopAutoCap" style="display:none; border-color:#ef4444; color:#fca5a5;" onclick="stopAutoCapture()">⏹ หยุด</button>
+      </div>
+      <div style="display:flex; gap:4px; flex-wrap:wrap; margin-bottom:6px;">
+        <button class="btn" style="flex:1;" onclick="captureSingleChatPage()">➕ แคปหน้านี้</button>
+        <button class="btn" style="flex:1;" onclick="downloadFullStitchedChatPng()">💾 เซฟภาพแชทยาว (.PNG)</button>
+        <button class="btn" style="flex:1;" onclick="downloadBubbleCardPng()">🖼️ แคปภาพบับเบิล (.PNG)</button>
+      </div>
+
+      <div id="ttMeta" class="hint" style="margin-bottom:5px;">เปิดห้องแชท "67" บน TikTok แล้วกด 📸 แคปออโต้ทั้งห้อง จะเลื่อนขึ้นบนสุดแล้วเลื่อนลงแคปสติกเกอร์+บับเบิลให้ครบ!</div>
+
+      <!-- Visual Captured TikTok Screens (Shows REAL Stickers, Photos, Videos & TikTok Bubbles!) -->
+      <div id="ttCaptureStrip" class="tt-capture-strip"></div>
+
+      <!-- TikTok Style Bubble Chat Log -->
+      <div class="chat-box" id="ttChatBox" style="height:155px; background:#0c0f17;">
         <div class="hint">ยังไม่ได้ดึงข้อความจาก TikTok</div>
       </div>
+
       <div style="display:flex; gap:5px;">
         <input type="text" id="ttSendInp" placeholder="พิมพ์ข้อความส่งเข้าแชท TikTok ห้อง 67..." onkeydown="if(event.key==='Enter') sendTikTokReply()" />
         <button class="btn primary" style="background:linear-gradient(135deg,#ff2a6d,#00f5d4);" onclick="sendTikTokReply()">📤 ส่ง</button>
       </div>
+    </div>
+
+    <!-- PC Image -> Phone Clipboard + Gallery Card -->
+    <div class="card" style="border-color: rgba(0, 245, 212, 0.45);">
+      <h3>🖼️ ส่งภาพจากคอม → Clipboard &amp; แกลเลอรีมือถือ</h3>
+      <div class="hint" style="margin-bottom:6px;">
+        แคปจอบนคอม (<b>Win + Shift + S</b>) แล้วกด <b>Ctrl + V</b> ตรงไหนก็ได้บนหน้านี้ ภาพจะเข้า <b>Clipboard + แกลเลอรีมือถือ</b> ทันที!
+      </div>
+      <div id="imgDropZone" style="border:1.5px dashed rgba(0,245,212,0.45); border-radius:10px; padding:10px; text-align:center; margin-bottom:6px; cursor:pointer; background:#040814;" onclick="document.getElementById('clipImgFile').click()">
+        <div id="imgDropHint" class="hint">📋 กด <b>Ctrl+V</b> เพื่อวางภาพที่แคป หรือคลิก/ลากไฟล์รูปมาวางที่นี่</div>
+        <img id="clipImgPreview" style="display:none; max-height:110px; max-width:100%; margin:6px auto 0; border-radius:8px; border:1px solid rgba(255,255,255,0.2);" />
+      </div>
+      <input type="file" id="clipImgFile" accept="image/*" style="display:none;" onchange="handleSelectedClipFile(this.files[0])" />
+      <div style="display:flex; gap:5px; flex-wrap:wrap;">
+        <button class="btn primary" style="flex:1;" onclick="readPcClipboardImage()">📋 ดึงภาพจาก Clipboard คอม</button>
+        <button class="btn" onclick="sendCmd({type:'paste_clipboard'})">📌 สั่งวางบนมือถือ</button>
+      </div>
+      <div id="clipImgStatus" class="hint" style="margin-top:5px;">พร้อมรับภาพจากคอมพิวเตอร์</div>
     </div>
 
     <!-- Connected Devices & Security Monitor -->
@@ -392,6 +454,8 @@
   let pingTimer = null;
   let ttAutoTimer = null;
   let ttMessagesCache = [];
+  let ttCapturedFrames = []; // Array of { dataUrl, img } cropped chat screens with real stickers & TikTok bubbles
+  let autoCapRunning = false;
   let floatingBuddyOn = false;
   let audioAbort = null;
   let audioCtx = null;
@@ -405,6 +469,93 @@
   const chatBox = document.getElementById('chatBox');
   const keyCatcher = document.getElementById('realtimeKeyCatcher');
   let chatMessages = [];
+
+  async function sendImageBlobToPhoneClipboard(blob, label) {
+    const st = document.getElementById('clipImgStatus');
+    const prev = document.getElementById('clipImgPreview');
+    const hint = document.getElementById('imgDropHint');
+    if (!blob) return;
+    try {
+      const objUrl = URL.createObjectURL(blob);
+      prev.src = objUrl;
+      prev.style.display = 'block';
+      if (hint) hint.textContent = `กำลังส่งภาพ (${(blob.size / 1024).toFixed(0)} KB)...`;
+      st.textContent = '⏳ กำลังส่งภาพลง Clipboard + แกลเลอรีมือถือ...';
+      const buf = await blob.arrayBuffer();
+      const res = await fetch('/api/clipboard-image', {
+        method: 'POST',
+        headers: {
+          'Content-Type': blob.type || 'image/png',
+          'X-Pin': currentPin
+        },
+        body: buf
+      });
+      const data = await res.json();
+      st.textContent = (data.ok ? '✅ ' : '❌ ') + (data.message || 'เสร็จสิ้น');
+      if (hint) hint.textContent = data.ok ? '✅ ส่งลง Clipboard + แกลเลอรีมือถือแล้ว! (กด Ctrl+V ส่งรูปใหม่ได้)' : '❌ ส่งไม่สำเร็จ';
+      setLog(data.message || 'ส่งภาพไปมือถือแล้ว');
+    } catch (e) {
+      st.textContent = '❌ ส่งภาพไม่สำเร็จ: ' + e.message;
+    }
+  }
+
+  function handleSelectedClipFile(file) {
+    if (file && file.type.startsWith('image/')) {
+      sendImageBlobToPhoneClipboard(file, file.name);
+    }
+  }
+
+  async function readPcClipboardImage() {
+    const st = document.getElementById('clipImgStatus');
+    try {
+      if (!navigator.clipboard || !navigator.clipboard.read) {
+        st.textContent = '💡 กด Ctrl + V บนหน้านี้ได้เลย (เบราว์เซอร์รองรับวางตรงทันที)';
+        return;
+      }
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const imgType = item.types.find(t => t.startsWith('image/'));
+        if (imgType) {
+          const blob = await item.getType(imgType);
+          await sendImageBlobToPhoneClipboard(blob, 'PC Clipboard');
+          return;
+        }
+      }
+      st.textContent = '⚠️ ยังไม่มีรูปภาพใน Clipboard คอม (ลองกด Win+Shift+S แคปหน้าจอก่อน)';
+    } catch (e) {
+      st.textContent = '💡 กด Ctrl + V ตรงนี้เพื่อวางรูปที่แคปได้เลย! (' + e.message + ')';
+    }
+  }
+
+  // Global Ctrl+V anywhere on the page catches PC screenshots (Win+Shift+S / PrintScreen) & sends straight to Phone Clipboard + Gallery!
+  window.addEventListener('paste', (e) => {
+    const items = (e.clipboardData || window.clipboardData)?.items;
+    if (!items) return;
+    for (const it of items) {
+      if (it.type && it.type.startsWith('image/')) {
+        const blob = it.getAsFile();
+        if (blob) {
+          e.preventDefault();
+          sendImageBlobToPhoneClipboard(blob, 'Screenshot');
+          return;
+        }
+      }
+    }
+  });
+
+  // Drag & Drop image file onto the drop zone
+  (function setupDropZone() {
+    const dz = document.getElementById('imgDropZone');
+    if (!dz) return;
+    dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.style.borderColor = '#00f5d4'; });
+    dz.addEventListener('dragleave', () => { dz.style.borderColor = 'rgba(0,245,212,0.45)'; });
+    dz.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dz.style.borderColor = 'rgba(0,245,212,0.45)';
+      const f = e.dataTransfer?.files?.[0];
+      if (f && f.type.startsWith('image/')) sendImageBlobToPhoneClipboard(f, f.name);
+    });
+  })();
 
   function toggleFloatingBuddy() {
     floatingBuddyOn = !floatingBuddyOn;
@@ -423,40 +574,314 @@
     }).catch(() => {});
   }
 
+  let ttChatTopRatio = 0.13;
+  let ttChatBottomRatio = 0.86;
+
   async function fetchTikTokChat() {
     const meta = document.getElementById('ttMeta');
     const box = document.getElementById('ttChatBox');
     try {
       const r = await fetch('/api/tiktok-chat?pin=' + encodeURIComponent(currentPin) + '&t=' + Date.now());
       const d = await r.json();
-      if (!d.ok) {
-        meta.textContent = '⚠️ ' + (d.error || 'ดึงแชทไม่สำเร็จ');
-        return;
+      if (!d.ok || !d.isTikTok) {
+        meta.textContent = '⚠️ ' + (d.error || 'ดึงได้เฉพาะบนแอป TikTok เท่านั้น — กรุณาเปิดห้องแชท TikTok ก่อน');
+        return null;
       }
+      if (typeof d.chatTopRatio === 'number') ttChatTopRatio = d.chatTopRatio;
+      if (typeof d.chatBottomRatio === 'number') ttChatBottomRatio = d.chatBottomRatio;
       ttMessagesCache = d.messages || [];
-      meta.textContent = (d.isTikTok ? '🎵 TikTok: ' : '📱 แอป: ') + (d.roomTitle || '-') + ` • เก็บได้ ${d.totalCount} ข้อความ`;
+      meta.textContent = `🎵 TikTok เท่านั้น • เก็บได้ ${d.totalCount} ข้อความ/สติกเกอร์ (ตัดเมนูออกแล้ว)`;
       if (!ttMessagesCache.length) {
-        box.innerHTML = '<div class="hint">ยังไม่พบข้อความบนหน้าจอ — เปิดห้องแชท "67" ใน TikTok แล้วกดดึงอีกครั้ง</div>';
-        return;
+        box.innerHTML = '<div class="hint">ยังไม่พบข้อความในห้องแชท TikTok — กรุณาเข้าห้องแชท "67" บน TikTok</div>';
+        return d;
       }
       box.innerHTML = '';
       for (const m of ttMessagesCache) {
         const div = document.createElement('div');
-        div.className = 'chat-msg ' + (m.side === 'me' ? 'pc' : 'phone');
-        if (m.side === 'meta') {
-          div.style.alignSelf = 'center';
-          div.style.background = 'rgba(148,163,184,0.14)';
-          div.style.border = 'none';
-          div.style.fontSize = '10px';
-          div.style.color = '#94a3b8';
-        }
+        div.className = m.side === 'me' ? 'tt-bubble-me' : (m.side === 'meta' ? 'tt-bubble-meta' : 'tt-bubble-them');
         div.textContent = m.text;
         box.appendChild(div);
       }
       box.scrollTop = box.scrollHeight;
+      return d;
     } catch (e) {
       meta.textContent = '❌ ดึงแชทไม่สำเร็จ: ' + e.message;
+      return null;
     }
+  }
+
+  function clearAllTikTokCapture() {
+    autoCapRunning = false;
+    ttCapturedFrames = [];
+    ttMessagesCache = [];
+    const strip = document.getElementById('ttCaptureStrip');
+    strip.innerHTML = '';
+    strip.classList.remove('show');
+    document.getElementById('ttChatBox').innerHTML = '<div class="hint">ล้างข้อมูลแชทที่บันทึกแล้ว</div>';
+    sendCmd({ type: 'tiktok_clear_cache' });
+  }
+
+  function sleepMs(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  async function grabChatFrameData() {
+    const resp = await fetch('/api/frame.jpg?pin=' + encodeURIComponent(currentPin) + '&t=' + Date.now());
+    if (!resp.ok) throw new Error('ไม่สามารถแคปเฟรมจากมือถือได้');
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const loadedImg = await new Promise((resolve, reject) => {
+      const im = new Image();
+      im.onload = () => resolve(im);
+      im.onerror = reject;
+      im.src = url;
+    });
+    // Crop STRICTLY to TikTok's chat RecyclerView (only bubbles + stickers, ZERO top/bottom menus!)
+    const cropTop = Math.round(loadedImg.naturalHeight * ttChatTopRatio);
+    const cropBot = Math.round(loadedImg.naturalHeight * ttChatBottomRatio);
+    const cropH = Math.max(100, cropBot - cropTop);
+    const c = document.createElement('canvas');
+    c.width = loadedImg.naturalWidth;
+    c.height = cropH;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(loadedImg, 0, cropTop, loadedImg.naturalWidth, cropH, 0, 0, c.width, cropH);
+
+    // Fingerprint 32x32 grayscale for smart top/bottom stop detection
+    const fp = document.createElement('canvas');
+    fp.width = 32; fp.height = 32;
+    const fctx = fp.getContext('2d');
+    fctx.drawImage(c, 0, 0, 32, 32);
+    const px = fctx.getImageData(0, 0, 32, 32).data;
+    const sig = new Uint8Array(32 * 32);
+    for (let i = 0; i < sig.length; i++) {
+      sig[i] = (px[i*4] * 0.3 + px[i*4+1] * 0.59 + px[i*4+2] * 0.11) | 0;
+    }
+    const dataUrl = c.toDataURL('image/jpeg', 0.9);
+    URL.revokeObjectURL(url);
+    return { dataUrl, width: c.width, height: cropH, sig };
+  }
+
+  function frameDiffRatio(sigA, sigB) {
+    if (!sigA || !sigB || sigA.length !== sigB.length) return 1;
+    let diff = 0;
+    for (let i = 0; i < sigA.length; i++) {
+      if (Math.abs(sigA[i] - sigB[i]) > 10) diff++;
+    }
+    return diff / sigA.length;
+  }
+
+  function appendCapturedFrameUI(frameObj) {
+    ttCapturedFrames.push(frameObj);
+    const strip = document.getElementById('ttCaptureStrip');
+    strip.classList.add('show');
+    const im = document.createElement('img');
+    im.src = frameObj.dataUrl;
+    im.title = `หน้าที่ ${ttCapturedFrames.length} (คลิกเพื่อเซฟภาพหน้านี้)`;
+    im.style.cursor = 'pointer';
+    im.onclick = () => {
+      const a = document.createElement('a');
+      a.href = frameObj.dataUrl;
+      a.download = `tiktok_chat_page_${ttCapturedFrames.length}.jpg`;
+      a.click();
+    };
+    strip.appendChild(im);
+    strip.scrollTop = strip.scrollHeight;
+  }
+
+  async function captureSingleChatPage() {
+    const meta = document.getElementById('ttMeta');
+    try {
+      const check = await fetchTikTokChat();
+      if (!check || !check.isTikTok) return;
+      const f = await grabChatFrameData();
+      appendCapturedFrameUI(f);
+      meta.textContent = `📸 แคปเฉพาะแชท TikTok แล้ว! รวม ${ttCapturedFrames.length} หน้า (ตัดเมนูออก เห็นเฉพาะบับเบิล+สติกเกอร์)`;
+    } catch (e) {
+      meta.textContent = '❌ แคปภาพไม่สำเร็จ: ' + e.message;
+    }
+  }
+
+  function stopAutoCapture() {
+    autoCapRunning = false;
+    document.getElementById('btnStopAutoCap').style.display = 'none';
+    document.getElementById('btnAutoCapAll').disabled = false;
+    document.getElementById('ttMeta').textContent = `⏹ หยุดแล้ว — แคปไว้ได้ ${ttCapturedFrames.length} หน้า (กด 💾 เซฟภาพแชทยาว ได้เลย)`;
+  }
+
+  async function startAutoCaptureFullChat() {
+    if (autoCapRunning) return;
+    autoCapRunning = true;
+    const meta = document.getElementById('ttMeta');
+    const btnStart = document.getElementById('btnAutoCapAll');
+    const btnStop = document.getElementById('btnStopAutoCap');
+    btnStart.disabled = true;
+    btnStop.style.display = 'inline-block';
+
+    ttCapturedFrames = [];
+    const strip = document.getElementById('ttCaptureStrip');
+    strip.innerHTML = '';
+    strip.classList.remove('show');
+    sendCmd({ type: 'tiktok_clear_cache' });
+
+    try {
+      // Strict TikTok-only check BEFORE auto-scrolling or capturing!
+      const ttCheck = await fetchTikTokChat();
+      if (!ttCheck || !ttCheck.isTikTok) {
+        meta.textContent = '⚠️ หยุดการทำงาน: ระบบจะดึงและแคปเฉพาะตอนเปิดหน้าห้องแชทในแอป TikTok เท่านั้น!';
+        return;
+      }
+
+      // Phase 1: Scroll ALL THE WAY TO THE TOP of the TikTok chat
+      meta.textContent = '⬆️ ขั้นที่ 1/2: กำลังเลื่อนแชท TikTok ไปด้านบนสุด...';
+      let prevSig = (await grabChatFrameData()).sig;
+      let sameTopCount = 0;
+      for (let i = 1; i <= 25 && autoCapRunning; i++) {
+        sendCmd({ type: 'swipe', x1: 0.5, y1: 0.24, x2: 0.5, y2: 0.84, duration: 240 });
+        meta.textContent = `⬆️ ขั้นที่ 1/2: เลื่อนขึ้นด้านบนสุด... (ครั้งที่ ${i})`;
+        await sleepMs(680);
+        const cur = await grabChatFrameData();
+        const diff = frameDiffRatio(prevSig, cur.sig);
+        prevSig = cur.sig;
+        if (diff < 0.025) {
+          sameTopCount++;
+          if (sameTopCount >= 2) break; // Reached top!
+        } else {
+          sameTopCount = 0;
+        }
+      }
+
+      if (!autoCapRunning) return;
+
+      // Phase 2: Capture top frame, then scroll DOWN page-by-page until the VERY BOTTOM!
+      meta.textContent = '⬇️ ขั้นที่ 2/2: ถึงบนสุดแล้ว! กำลังเลื่อนลงและแคปภาพ+สติกเกอร์ทีละหน้า...';
+      let lastCap = await grabChatFrameData();
+      appendCapturedFrameUI(lastCap);
+      await fetchTikTokChat();
+
+      let sameBotCount = 0;
+      for (let page = 2; page <= 35 && autoCapRunning; page++) {
+        // Scroll DOWN (swipe finger upward)
+        sendCmd({ type: 'swipe', x1: 0.5, y1: 0.78, x2: 0.5, y2: 0.26, duration: 300 });
+        await sleepMs(750);
+        const cur = await grabChatFrameData();
+        const diff = frameDiffRatio(lastCap.sig, cur.sig);
+        if (diff < 0.025) {
+          sameBotCount++;
+          if (sameBotCount >= 2) break; // Reached very bottom!
+        } else {
+          sameBotCount = 0;
+          appendCapturedFrameUI(cur);
+          await fetchTikTokChat();
+          lastCap = cur;
+          meta.textContent = `📸 กำลังเลื่อนลงและแคปแชท... เก็บแล้ว ${ttCapturedFrames.length} หน้า (${ttMessagesCache.length} ข้อความ)`;
+        }
+      }
+
+      meta.textContent = `✅ แคปแชททั้งห้องเสร็จสมบูรณ์! รวม ${ttCapturedFrames.length} หน้า (เห็นสติกเกอร์ + บับเบิล TikTok ครบ — กด 💾 เซฟภาพแชทยาว ได้เลย)`;
+    } catch (e) {
+      meta.textContent = '❌ เกิดข้อผิดพลาดระหว่างแคปออโต้: ' + e.message;
+    } finally {
+      autoCapRunning = false;
+      btnStart.disabled = false;
+      btnStop.style.display = 'none';
+    }
+  }
+
+  async function downloadFullStitchedChatPng() {
+    const meta = document.getElementById('ttMeta');
+    if (!ttCapturedFrames.length) {
+      meta.textContent = '⚠️ ยังไม่มีภาพที่แคปไว้ — กด 📸 แคปออโต้ทั้งห้อง หรือ ➕ แคปหน้านี้ ก่อน';
+      return;
+    }
+    meta.textContent = `⏳ กำลังต่อภาพแชท ${ttCapturedFrames.length} หน้าเป็นภาพยาว...`;
+    const imgs = await Promise.all(ttCapturedFrames.map(f => new Promise((res) => {
+      const im = new Image();
+      im.onload = () => res(im);
+      im.src = f.dataUrl;
+    })));
+    const w = imgs[0].naturalWidth;
+    const maxCanvasH = 24000;
+    const totalH = Math.min(maxCanvasH, imgs.reduce((s, im) => s + im.naturalHeight, 0));
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = totalH;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, w, totalH);
+    let y = 0;
+    for (const im of imgs) {
+      if (y + im.naturalHeight > maxCanvasH) break;
+      ctx.drawImage(im, 0, y);
+      y += im.naturalHeight;
+    }
+    const room = (document.getElementById('ttRoomKw').value || '67').replace(/[^a-zA-Z0-9ก-๙_-]/g, '');
+    const a = document.createElement('a');
+    a.href = c.toDataURL('image/png');
+    a.download = `tiktok_chat_${room}_full_${Date.now()}.png`;
+    a.click();
+    meta.textContent = `✅ บันทึกภาพแชทยาวห้อง ${room} (${ttCapturedFrames.length} หน้า) ลงเครื่องคอมเรียบร้อย!`;
+  }
+
+  function downloadBubbleCardPng() {
+    const meta = document.getElementById('ttMeta');
+    if (!ttMessagesCache.length) {
+      meta.textContent = '⚠️ ยังไม่มีข้อความบับเบิลที่บันทึกไว้';
+      return;
+    }
+    const room = document.getElementById('ttRoomKw').value || '67';
+    const width = 540;
+    const lineH = 22;
+    const pad = 18;
+    const items = ttMessagesCache.slice(-80);
+    // Estimate height
+    const c = document.createElement('canvas');
+    c.width = width;
+    c.height = Math.min(16000, 90 + items.length * 58);
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#0c0f17';
+    ctx.fillRect(0, 0, c.width, c.height);
+
+    // Header
+    ctx.fillStyle = '#161b26';
+    ctx.fillRect(0, 0, width, 56);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 18px Segoe UI, sans-serif';
+    ctx.fillText(`🎵 TikTok Chat • ห้อง ${room} (${items.length} ข้อความ)`, 18, 34);
+
+    let y = 74;
+    ctx.font = '14px Segoe UI, sans-serif';
+    for (const m of items) {
+      const txt = String(m.text || '').slice(0, 120);
+      const maxW = 360;
+      const measured = Math.min(maxW, Math.max(60, ctx.measureText(txt).width + 26));
+      const bh = 38;
+      if (y + bh + 16 > c.height) break;
+      let bx = pad;
+      if (m.side === 'me') {
+        bx = width - pad - measured;
+        ctx.fillStyle = '#20d5ec';
+      } else if (m.side === 'meta') {
+        bx = (width - measured) / 2;
+        ctx.fillStyle = '#1e293b';
+      } else {
+        ctx.fillStyle = '#232733';
+      }
+      ctx.beginPath();
+      ctx.roundRect(bx, y, measured, bh, 16);
+      ctx.fill();
+      ctx.fillStyle = m.side === 'me' ? '#04101f' : '#f8fafc';
+      ctx.fillText(txt.slice(0, 44), bx + 13, y + 24);
+      y += bh + 10;
+    }
+
+    // Trim to actual height
+    const out = document.createElement('canvas');
+    out.width = width;
+    out.height = Math.min(c.height, y + 20);
+    out.getContext('2d').drawImage(c, 0, 0);
+    const a = document.createElement('a');
+    a.href = out.toDataURL('image/png');
+    a.download = `tiktok_bubbles_${room}_${Date.now()}.png`;
+    a.click();
+    meta.textContent = `✅ แคปภาพแชทสไตล์บับเบิล TikTok ห้อง ${room} ลงคอมแล้ว!`;
   }
 
   async function scrollAndFetchTikTok() {

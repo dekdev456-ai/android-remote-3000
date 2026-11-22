@@ -51,6 +51,7 @@ class LocalHttpServer(
         fun onUnauthorizedControlAttempt(clientIp: String, deviceName: String)
         fun onIncomingPcChat(text: String, senderLabel: String)
         fun toggleFloatingBuddy(enabled: Boolean): Pair<Boolean, String>
+        fun setPhoneClipboardImage(imageBytes: ByteArray, mimeType: String): Pair<Boolean, String>
         fun installApkBytes(apkBytes: ByteArray): Pair<Boolean, String>
     }
 
@@ -299,7 +300,11 @@ class LocalHttpServer(
                 return
             }
 
-            val maxBody = if (path == "/api/update-apk") 60_000_000 else 1_000_000
+            val maxBody = when (path) {
+                "/api/update-apk" -> 60_000_000
+                "/api/clipboard-image" -> 25_000_000
+                else -> 1_000_000
+            }
             val contentLength = headers["content-length"]?.toIntOrNull()?.coerceIn(0, maxBody) ?: 0
             val bodyBytes = if (contentLength > 0) readExact(input, contentLength) else ByteArray(0)
 
@@ -387,6 +392,16 @@ class LocalHttpServer(
                     val msg = ServiceState.addChatMessage("$deviceName ($clientIp)", txt)
                     delegate.onIncomingPcChat(txt, "$deviceName • $clientIp")
                     sendJson(output, 200, JSONObject().put("ok", true).put("message", chatToJson(msg)))
+                }
+
+                method == "POST" && path == "/api/clipboard-image" -> {
+                    if (!isPinValid(pinParam)) {
+                        sendJson(output, 401, JSONObject().put("ok", false).put("error", "Invalid PIN"))
+                        return
+                    }
+                    val mime = headers["content-type"] ?: "image/png"
+                    val (ok, message) = delegate.setPhoneClipboardImage(bodyBytes, mime)
+                    sendJson(output, if (ok) 200 else 400, JSONObject().put("ok", ok).put("message", message))
                 }
 
                 method == "POST" && path == "/api/update-apk" -> {
@@ -680,6 +695,7 @@ class LocalHttpServer(
                 json.optBoolean("append", true)
             )
             "paste" -> acc.pasteText(json.optString("text", ""))
+            "paste_clipboard" -> acc.triggerNativePaste()
             "backspace" -> acc.sendBackspace()
             "enter" -> acc.sendEnter()
             else -> false

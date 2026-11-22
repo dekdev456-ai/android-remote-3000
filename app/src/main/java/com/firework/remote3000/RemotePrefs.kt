@@ -9,6 +9,7 @@ object RemotePrefs {
     private const val KEY_KEEP_AWAKE = "keep_awake"
     private const val KEY_PIN_REQUIRED = "pin_required"
     private const val KEY_SAVED_PIN = "saved_pin"
+    private const val KEY_FLOATING_STOP = "floating_stop_button"
 
     private fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
@@ -17,6 +18,7 @@ object RemotePrefs {
         val p = prefs(ctx)
         ServiceState.controlAllowed.value = p.getBoolean(KEY_CONTROL_ALLOWED, true)
         ServiceState.keepScreenAwake.value = p.getBoolean(KEY_KEEP_AWAKE, true)
+        ServiceState.showFloatingStopButton.value = p.getBoolean(KEY_FLOATING_STOP, true)
         ServiceState.pinRequired.value = p.getBoolean(KEY_PIN_REQUIRED, true)
         val savedPin = p.getString(KEY_SAVED_PIN, null)
         if (!savedPin.isNullOrBlank() && savedPin.length == 6) {
@@ -36,6 +38,11 @@ object RemotePrefs {
     fun setKeepAwake(ctx: Context, awake: Boolean) {
         ServiceState.keepScreenAwake.value = awake
         prefs(ctx).edit().putBoolean(KEY_KEEP_AWAKE, awake).apply()
+    }
+
+    fun setShowFloatingStopButton(ctx: Context, show: Boolean) {
+        ServiceState.showFloatingStopButton.value = show
+        prefs(ctx).edit().putBoolean(KEY_FLOATING_STOP, show).apply()
     }
 
     fun setPinRequired(ctx: Context, required: Boolean) {

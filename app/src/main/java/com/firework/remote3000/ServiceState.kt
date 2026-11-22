@@ -6,7 +6,15 @@ import java.util.concurrent.atomic.AtomicLong
 
 object ServiceState {
     const val DEFAULT_PORT = 3000
-    const val VERSION_NAME = "2.5.0"
+    const val VERSION_NAME = "2.9.0"
+
+    data class ReceivedImage(
+        val filePath: String,
+        val fileName: String,
+        val mimeType: String,
+        val sizeBytes: Long,
+        val timeMs: Long
+    )
 
     data class ChatMessage(
         val id: Long,
@@ -39,6 +47,7 @@ object ServiceState {
     val accessibilityEnabled = MutableStateFlow(false)
     val controlAllowed = MutableStateFlow(true)
     val keepScreenAwake = MutableStateFlow(true)
+    val showFloatingStopButton = MutableStateFlow(true)
     val lanIp = MutableStateFlow("127.0.0.1")
     val port = MutableStateFlow(DEFAULT_PORT)
     val pin = MutableStateFlow(NetworkUtils.generatePin())
@@ -48,6 +57,7 @@ object ServiceState {
     val securityAlerts = MutableStateFlow<List<SecurityAlert>>(emptyList())
     val lastError = MutableStateFlow<String?>(null)
     val chatMessages = MutableStateFlow<List<ChatMessage>>(emptyList())
+    val latestReceivedImage = MutableStateFlow<ReceivedImage?>(null)
 
     val blockedIps = CopyOnWriteArraySet<String>()
 
@@ -59,6 +69,9 @@ object ServiceState {
 
     @Volatile
     var onKeepAwakeChanged: ((Boolean) -> Unit)? = null
+
+    @Volatile
+    var onFloatingStopSettingChanged: ((Boolean) -> Unit)? = null
 
     fun addChatMessage(sender: String, text: String): ChatMessage {
         val clean = text.trim()
