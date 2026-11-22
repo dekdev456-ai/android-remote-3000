@@ -138,6 +138,15 @@ class RemoteScreenService : Service(), LocalHttpServer.ServerDelegate {
         }
     }
 
+    override fun onCreate() {
+        super.onCreate()
+        RemotePrefs.loadIntoState(this)
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // Keep foreground screen server alive even if user closes MainActivity from Recents
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onConfigurationChanged(newConfig: Configuration) {

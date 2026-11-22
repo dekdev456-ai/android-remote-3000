@@ -6,7 +6,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 object ServiceState {
     const val DEFAULT_PORT = 3000
-    const val VERSION_NAME = "2.3.0"
+    const val VERSION_NAME = "2.4.0"
 
     data class ChatMessage(
         val id: Long,

@@ -4,12 +4,14 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ComponentName
 import android.content.Context
 import android.graphics.Path
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.util.DisplayMetrics
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
@@ -23,12 +25,31 @@ class RemoteAccessibilityService : AccessibilityService() {
         @Volatile
         var instance: RemoteAccessibilityService? = null
             private set
+
+        fun isEnabledInSystemSettings(context: Context): Boolean {
+            return try {
+                val enabled = Settings.Secure.getString(
+                    context.contentResolver,
+                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+                ) ?: return false
+                val target = ComponentName(context, RemoteAccessibilityService::class.java).flattenToString()
+                val shortTarget = ComponentName(context, RemoteAccessibilityService::class.java).flattenToShortString()
+                enabled.split(':').any { it.equals(target, ignoreCase = true) || it.equals(shortTarget, ignoreCase = true) }
+            } catch (_: Exception) {
+                false
+            }
+        }
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        RemotePrefs.loadIntoState(this)
         instance = this
         ServiceState.accessibilityEnabled.value = true
+    }
+
+    override fun onTaskRemoved(rootIntent: android.content.Intent?) {
+        // Keep Accessibility Service alive when user swipes app away from Recents
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {

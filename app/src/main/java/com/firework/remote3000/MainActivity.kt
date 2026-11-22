@@ -9,8 +9,10 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
@@ -60,6 +62,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnRefreshIp: Button
     private lateinit var btnNewPin: Button
     private lateinit var btnOpenAccessibility: Button
+    private lateinit var tvBatteryStatus: TextView
+    private lateinit var btnIgnoreBattery: Button
+    private lateinit var btnAppSettings: Button
 
     // Companion Buddy UI
     private lateinit var buddyView: BuddyView
@@ -136,6 +141,12 @@ class MainActivity : AppCompatActivity() {
         btnRefreshIp = findViewById(R.id.btnRefreshIp)
         btnNewPin = findViewById(R.id.btnNewPin)
         btnOpenAccessibility = findViewById(R.id.btnOpenAccessibility)
+        tvBatteryStatus = findViewById(R.id.tvBatteryStatus)
+        btnIgnoreBattery = findViewById(R.id.btnIgnoreBattery)
+        btnAppSettings = findViewById(R.id.btnAppSettings)
+
+        // Load persistent saved settings so closing & reopening NEVER turns off control or resets PIN
+        RemotePrefs.loadIntoState(this)
 
         // Buddy views
         buddyView = findViewById(R.id.buddyView)
@@ -176,18 +187,18 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnNewPin.setOnClickListener {
-            ServiceState.pin.value = NetworkUtils.generatePin()
+            RemotePrefs.setPin(this, NetworkUtils.generatePin())
         }
 
         switchPin.setOnCheckedChangeListener { _, checked ->
-            ServiceState.pinRequired.value = checked
+            RemotePrefs.setPinRequired(this, checked)
         }
 
         switchAllowControl.setOnCheckedChangeListener { _, checked ->
-            ServiceState.controlAllowed.value = checked
+            RemotePrefs.setControlAllowed(this, checked)
             ServiceState.onClientsChangedBroadcast?.invoke()
             val msg = if (checked) {
-                "✅ เปิดให้คอมพิวเตอร์ควบคุมหน้าจอได้"
+                "✅ เปิดให้คอมพิวเตอร์ควบคุมหน้าจอได้ตลอด (บันทึกถาวร)"
             } else {
                 "🛡️ ปิดการควบคุมจอแล้ว — หากมีคนพยายามแตะ/คุม จะแจ้งเตือนทันที!"
             }
@@ -195,12 +206,27 @@ class MainActivity : AppCompatActivity() {
         }
 
         switchKeepAwake.setOnCheckedChangeListener { _, checked ->
-            ServiceState.keepScreenAwake.value = checked
+            RemotePrefs.setKeepAwake(this, checked)
             ServiceState.onKeepAwakeChanged?.invoke(checked)
         }
 
         btnOpenAccessibility.setOnClickListener {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+
+        btnIgnoreBattery.setOnClickListener {
+            requestIgnoreBatteryOptimizations()
+        }
+
+        btnAppSettings.setOnClickListener {
+            try {
+                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                startActivity(intent)
+            } catch (_: Exception) {
+                startActivity(Intent(Settings.ACTION_SETTINGS))
+            }
         }
 
         btnSendPhoneChat.setOnClickListener {
@@ -310,7 +336,41 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         ServiceState.lanIp.value = NetworkUtils.getLocalIpv4Address()
-        ServiceState.accessibilityEnabled.value = RemoteAccessibilityService.instance != null
+        val liveRunning = RemoteAccessibilityService.instance != null
+        val enabledInSys = RemoteAccessibilityService.isEnabledInSystemSettings(this)
+        ServiceState.accessibilityEnabled.value = liveRunning
+        if (!liveRunning && enabledInSys) {
+            tvAccStatus.text = "⚠️ ระบบประหยัดแบตของมือถือตัดสิทธิ์คุมจอชั่วคราว — กด 'ปิดประหยัดแบต' ด้านล่าง แล้วปิด-เปิด Accessibility 1 ครั้งเพื่อให้ติดถาวร"
+            tvAccStatus.setTextColor(ContextCompat.getColor(this, R.color.accent_red))
+        }
+        refreshBatteryStatus()
+    }
+
+    private fun refreshBatteryStatus() {
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        val ignoring = pm.isIgnoringBatteryOptimizations(packageName)
+        if (ignoring) {
+            tvBatteryStatus.text = "✅ ปิดการประหยัดแบตแล้ว (ระบบจะไม่แอบปิดสิทธิ์คุมจอเอง!)"
+            tvBatteryStatus.setTextColor(ContextCompat.getColor(this, R.color.accent_green))
+        } else {
+            tvBatteryStatus.text = "⚠️ แนะนำสำหรับ Huawei/Android: กดปุ่มด้านล่างเพื่อกันระบบแอบปิดสิทธิ์คุมจอตอนปิดแอป"
+            tvBatteryStatus.setTextColor(ContextCompat.getColor(this, R.color.accent_blue))
+        }
+    }
+
+    private fun requestIgnoreBatteryOptimizations() {
+        try {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.parse("package:$packageName")
+            }
+            startActivity(intent)
+        } catch (_: Exception) {
+            try {
+                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            } catch (_: Exception) {
+                Toast.makeText(this, "กรุณาตั้งค่า แบตเตอรี่ -> การเปิดแอป -> จัดการด้วยตัวเอง ใน Settings ของเครื่อง", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     override fun onDestroy() {

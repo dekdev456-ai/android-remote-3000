@@ -497,6 +497,41 @@
                 android:layout_marginTop="8dp"
                 android:text="⚙️ เปิดหน้าตั้งค่า Accessibility"
                 android:textAllCaps="false" />
+
+            <TextView
+                android:id="@+id/tvBatteryStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="⚠️ แนะนำสำหรับ Huawei/Android: ปิดประหยัดแบตเพื่อไม่ให้สิทธิ์คุมจอหลุดเอง"
+                android:textColor="@color/accent_blue"
+                android:textSize="12sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btnIgnoreBattery"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="6dp"
+                    android:layout_weight="1"
+                    android:text="🔋 ปิดประหยัดแบต (กันหลุด)"
+                    android:textAllCaps="false"
+                    android:textSize="11.5sp" />
+
+                <Button
+                    android:id="@+id/btnAppSettings"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="🔒 ตั้งค่าแอป (Huawei)"
+                    android:textAllCaps="false"
+                    android:textSize="11.5sp" />
+            </LinearLayout>
         </LinearLayout>
 
         <!-- OTA Self-Update Card -->
